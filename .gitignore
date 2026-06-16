@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual env
+venv/
+.env
+
+# Datasets
+data/
+datasets/
+
+# Trained models
+models/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.h5
+
+# Logs/results
+logs/
+results/
+outputs/
+
+# Large files
+*.zip
+*.tar.gz
+
+# VS Code
+.vscode/
