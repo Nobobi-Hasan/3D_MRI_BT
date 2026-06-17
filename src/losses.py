@@ -12,7 +12,7 @@ class MultiTaskLoss(nn.Module):
         # MONAI Dice Loss for segmentation
         self.dice_loss = DiceLoss(to_onehot_y=True, softmax=True)
         
-        # define tensor tracking for classification class weights to mitigate HGG/LGG imbalance
+        # Move CLASSIFICATION_CLASS_WEIGHTS (balancing HGG/LGG) with the model to GPU/CPU
         self.register_buffer("class_weights", torch.tensor(config.CLASSIFICATION_CLASS_WEIGHTS, dtype=torch.float32))
         
         # Cross Entropy Loss for classification; using target balancing penalty weights
