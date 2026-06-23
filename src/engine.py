@@ -109,10 +109,14 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
     
     os.makedirs(config.CHECKPOINT_DIR, exist_ok=True)
     latest_path = os.path.join(config.CHECKPOINT_DIR, "latest_checkpoint.pth")
-    best_path = os.path.join(config.CHECKPOINT_DIR, "best_checkpoint.pth")
+    best_seg_path = os.path.join(config.CHECKPOINT_DIR, "best_seg.pth")
+    best_cls_path = os.path.join(config.CHECKPOINT_DIR, "best_cls.pth")
+    best_multitask_path = os.path.join(config.CHECKPOINT_DIR, "best_multitask.pth")
 
     start_epoch = 0
-    best_combined_score = 0.0  # UPDATED: Tracks blended metric equilibrium
+    best_mean_dice = 0.0
+    best_macro_f1 = 0.0
+    best_combined_score = 0.0
 
     if os.path.exists(latest_path):
         print(f"[*] Found existing checkpoint record at: {latest_path}. Loading state...")
@@ -132,6 +136,8 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
         scaler.load_state_dict(checkpoint["scaler_state"])
         
         start_epoch = checkpoint["epoch"]
+        best_mean_dice = checkpoint.get("best_mean_dice", 0.0)
+        best_macro_f1 = checkpoint.get("best_macro_f1", 0.0)
         best_combined_score = checkpoint.get("best_combined_score", 0.0)
         print(f"[+] Recovery complete. Resuming from absolute internal epoch counter: {start_epoch}")
     else:
@@ -150,14 +156,19 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
 
         val_metrics = validate_one_epoch(model_components, val_loader, criterion, device)
         
-        # Calculate Multi-Task balanced score validation checkpoint indicators
+        # Calculate Multi-Task balanced score metrics
         mean_dice = (val_metrics["dice_WT"] + val_metrics["dice_TC"] + val_metrics["dice_ET"]) / 3.0
-        combined_score = (0.5 * mean_dice) + (0.5 * val_metrics["macro_f1"])
+        combined_score = (0.4 * mean_dice) + (0.3 * val_metrics["macro_f1"]) + (0.3 * val_metrics["roc_auc"])
         
-        print(f"[Val] Loss: {val_metrics['val_loss']:.4f} | Mean Dice: {mean_dice:.4f} | Macro F1: {val_metrics['macro_f1']:.4f} | Combined Score: {combined_score:.4f}")
+        print(f"[Val] Loss: {val_metrics['val_loss']:.4f} | Mean Dice: {mean_dice:.4f} | Macro F1: {val_metrics['macro_f1']:.4f} | ROC-AUC: {val_metrics['roc_auc']:.4f} | Combined Score: {combined_score:.4f}")
 
         if scheduler:
             scheduler.step()
+
+        # Update historical threshold metrics safely
+        current_best_mean_dice = max(mean_dice, best_mean_dice)
+        current_best_macro_f1 = max(val_metrics["macro_f1"], best_macro_f1)
+        current_best_combined_score = max(combined_score, best_combined_score)
 
         checkpoint_state = {
             "epoch": epoch + 1,
@@ -169,16 +180,35 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
             "optimizer_state": optimizer.state_dict(),
             "scheduler_state": scheduler.state_dict() if scheduler else None,
             "scaler_state": scaler.state_dict(),
-            "best_combined_score": max(combined_score, best_combined_score),
+            "mean_dice": mean_dice,
+            "macro_f1": val_metrics["macro_f1"],
+            "roc_auc": val_metrics["roc_auc"],
+            "combined_score": combined_score,
+            "best_mean_dice": current_best_mean_dice,
+            "best_macro_f1": current_best_macro_f1,
+            "best_combined_score": current_best_combined_score,
         }
 
+        # Save Latest Progress Checkpoint immediately after every single epoch loop completes
         torch.save(checkpoint_state, latest_path)
         print(f"Stateful tracking saved to: {latest_path}")
 
-        # Save best multi-task framework model configuration
+        # 1. Evaluate and track Independent Peak Segmentation Weights
+        if mean_dice > best_mean_dice:
+            best_mean_dice = mean_dice
+            torch.save(checkpoint_state, best_seg_path)
+            print(f"*** best segmentation framework model configuration stored at: {best_seg_path}")
+
+        # 2. Evaluate and track Independent Peak Classification Weights
+        if val_metrics["macro_f1"] > best_macro_f1:
+            best_macro_f1 = val_metrics["macro_f1"]
+            torch.save(checkpoint_state, best_cls_path)
+            print(f"*** best classification framework model configuration stored at: {best_cls_path}")
+
+        # 3. Evaluate and track Optimal Blended Multi-Task Balanced Weights
         if combined_score > best_combined_score:
             best_combined_score = combined_score
-            torch.save(checkpoint_state, best_path)
-            print(f"*** best multi-task framework model configuration stored at: {best_path}")
+            torch.save(checkpoint_state, best_multitask_path)
+            print(f"*** best multi-task framework model configuration stored at: {best_multitask_path}")
 
     print(f"\n Incremental cycle finished successfully. Total absolute epochs processed: {target_epoch}")
