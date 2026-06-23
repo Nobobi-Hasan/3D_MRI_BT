@@ -9,7 +9,7 @@ import src.config as config
 from src.metrics import SegmentationMetrics, compute_classification_metrics
 
 def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, device):
-    """Trains all 5 architectural model components concurrently for a multi-task epoch."""
+    """Trains all 5 architectural model components concurrently for one epoch."""
     backbone, fusion, shared_backbone, decoder, classifier = model_components
     
     backbone.train()
@@ -51,7 +51,7 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
 
 @torch.no_grad()
 def validate_one_epoch(model_components, dataloader, criterion, device):
-    """Evaluates all 5 components on validation subsets with hidden ground-truth masks."""
+    """Evaluates all 5 components on validation subsets with ground-truth masks."""
     backbone, fusion, shared_backbone, decoder, classifier = model_components
     
     backbone.eval()
@@ -72,7 +72,6 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
         seg_targets = batch["label"].to(device)
         cls_targets = batch["grade"].to(device)
 
-        # FIXED: Explicitly disable autocast if device is CPU to avoid runtime warnings
         with autocast(device_type=device.type, enabled=(device.type == "cuda")):
             modality_tokens, spatial_shape = backbone(images)
             fused_tokens = fusion(modality_tokens, images)
@@ -107,14 +106,13 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
 
 
 def run_training(model_components, train_loader, val_loader, criterion, optimizer, scheduler, scaler, device):
-    """Orchestrates relative, incremental training execution loops with 5-component recovery tracking."""
     
     os.makedirs(config.CHECKPOINT_DIR, exist_ok=True)
     latest_path = os.path.join(config.CHECKPOINT_DIR, "latest_checkpoint.pth")
     best_path = os.path.join(config.CHECKPOINT_DIR, "best_checkpoint.pth")
 
     start_epoch = 0
-    best_macro_f1 = 0.0
+    best_combined_score = 0.0  # UPDATED: Tracks blended metric equilibrium
 
     if os.path.exists(latest_path):
         print(f"[*] Found existing checkpoint record at: {latest_path}. Loading state...")
@@ -134,10 +132,10 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
         scaler.load_state_dict(checkpoint["scaler_state"])
         
         start_epoch = checkpoint["epoch"]
-        best_macro_f1 = checkpoint.get("best_macro_f1", 0.0)
+        best_combined_score = checkpoint.get("best_combined_score", 0.0)
         print(f"[+] Recovery complete. Resuming from absolute internal epoch counter: {start_epoch}")
     else:
-        print("[*] No prior checkpoint found. Initializing a clean baseline training timeline.")
+        print("[*] No prior checkpoint found. Initializing a new training.")
 
     target_epoch = start_epoch + config.NUM_EPOCHS
     print(f"[*] Incremental Run Configuration: Training from Epoch {start_epoch} -> Target Epoch {target_epoch} (+{config.NUM_EPOCHS} epochs)")
@@ -151,7 +149,12 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
         print(f"[Train] Total Loss: {train_loss:.4f} | Seg Loss: {train_seg:.4f} | Cls Loss: {train_cls:.4f}")
 
         val_metrics = validate_one_epoch(model_components, val_loader, criterion, device)
-        print(f"[Val] Loss: {val_metrics['val_loss']:.4f} | WT Dice: {val_metrics['dice_WT']:.4f} | TC Dice: {val_metrics['dice_TC']:.4f} | ET Dice: {val_metrics['dice_ET']:.4f} | Macro F1: {val_metrics['macro_f1']:.4f}")
+        
+        # Calculate Multi-Task balanced score validation checkpoint indicators
+        mean_dice = (val_metrics["dice_WT"] + val_metrics["dice_TC"] + val_metrics["dice_ET"]) / 3.0
+        combined_score = (0.5 * mean_dice) + (0.5 * val_metrics["macro_f1"])
+        
+        print(f"[Val] Loss: {val_metrics['val_loss']:.4f} | Mean Dice: {mean_dice:.4f} | Macro F1: {val_metrics['macro_f1']:.4f} | Combined Score: {combined_score:.4f}")
 
         if scheduler:
             scheduler.step()
@@ -166,15 +169,16 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
             "optimizer_state": optimizer.state_dict(),
             "scheduler_state": scheduler.state_dict() if scheduler else None,
             "scaler_state": scaler.state_dict(),
-            "best_macro_f1": max(val_metrics["macro_f1"], best_macro_f1),
+            "best_combined_score": max(combined_score, best_combined_score),
         }
 
         torch.save(checkpoint_state, latest_path)
-        print(f"[✔] Stateful tracking saved to: {latest_path}")
+        print(f"Stateful tracking saved to: {latest_path}")
 
-        if val_metrics["macro_f1"] > best_macro_f1:
-            best_macro_f1 = val_metrics["macro_f1"]
+        # Save best multi-task framework model configuration
+        if combined_score > best_combined_score:
+            best_combined_score = combined_score
             torch.save(checkpoint_state, best_path)
-            print(f"[★] Higher classification threshold achieved. Golden weights stored at: {best_path}")
+            print(f"*** best multi-task framework model configuration stored at: {best_path}")
 
-    print(f"\n[+] Incremental cycle finished successfully. Total absolute epochs processed: {target_epoch}")
+    print(f"\n Incremental cycle finished successfully. Total absolute epochs processed: {target_epoch}")
