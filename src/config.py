@@ -9,11 +9,13 @@ import os
 DRIVE_PROJECT_ROOT = "/content/drive/MyDrive/ML_Projects/3D_MRI_Brain_Tumor"
 
 # Dataset zip file source path
-ZIP_SOURCE_PATH = "/content/drive/MyDrive/ML-Datasets/BraTS2020_TrainingData.zip"
+ZIP_SOURCE_PATH_RAW = "/content/drive/MyDrive/ML-Datasets/BraTS2020_TrainingData.zip"
+ZIP_SOURCE_PATH = "/content/drive/MyDrive/ML-Datasets/BraTS2020_TrainingData_128.zip"
 
 # Local NVMe scratch space for fast unzipping
 LOCAL_EXTRACT_DIR = "/content"
-DATA_ROOT_DIR = os.path.join(LOCAL_EXTRACT_DIR, "MICCAI_BraTS2020_TrainingData")
+DATA_ROOT_DIR_RAW = os.path.join(LOCAL_EXTRACT_DIR, "MICCAI_BraTS2020_TrainingData")
+DATA_ROOT_DIR = os.path.join(LOCAL_EXTRACT_DIR, "MICCAI_BraTS2020_TrainingData_128")
 
 # Metadata and label files inside unzipped dataset
 NAME_MAPPING_CSV = os.path.join(DATA_ROOT_DIR, "name_mapping.csv")
