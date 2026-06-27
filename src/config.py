@@ -56,6 +56,9 @@ NUM_CLASS_CLASSES = 2
 # Sub-volume dimensions for 3D patch training
 PATCH_SIZE = (96, 96, 96)
 
+# Dimensionality of the token embeddings across the Mamba blocks
+EMBED_DIM = 96
+
 
 # =========================================================================
 # 4. Training Loop Optimization Settings
@@ -64,14 +67,17 @@ PATCH_SIZE = (96, 96, 96)
 BATCH_SIZE = 1
 
 # Total targeted training epochs across sessions
-TOTAL_EPOCHS = 5
+NUM_EPOCHS = 5
 
 # Base optimizer learning parameters
 LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 1e-5
 
+# Lowest learning rate boundary for the scheduler decay cycle
+ETA_MIN = 1e-6
+
 # Safe RAM cache threshold for MONAI CacheDataset on Free Colab
-CACHE_RATE = 0.3
+CACHE_RATE = 0.0  # was 0.3 earlier (session crached due to RAM overload)
 NUM_WORKERS = 2
 
 
