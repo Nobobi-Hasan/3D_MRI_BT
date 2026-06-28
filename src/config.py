@@ -56,7 +56,7 @@ NUM_SEG_CLASSES = 4
 NUM_CLASS_CLASSES = 2
 
 # Sub-volume dimensions for 3D patch training
-PATCH_SIZE = (96, 96, 96)
+PATCH_SIZE = (64, 64, 64)
 
 # Dimensionality of the token embeddings across the Mamba blocks
 EMBED_DIM = 96
