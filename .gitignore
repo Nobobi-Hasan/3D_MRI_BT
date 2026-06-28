@@ -13,8 +13,6 @@ venv/
 data/
 datasets/
 
-# Trained models
-models/
 checkpoints/
 *.pt
 *.pth
