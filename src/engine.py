@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from torch.amp import autocast, GradScaler
 from tqdm import tqdm
+from monai.inferers import sliding_window_inference
 import src.config as config
 from src.metrics import SegmentationMetrics, compute_classification_metrics
 
@@ -30,10 +31,10 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
         optimizer.zero_grad(set_to_none=True)
 
         with autocast(device_type=device.type, enabled=(device.type == "cuda")):
-            modality_tokens, spatial_shape = backbone(images)
+            modality_tokens, spatial_shape, skip_features = backbone(images)
             fused_tokens = fusion(modality_tokens, images)
             latent_tokens = shared_backbone(fused_tokens)
-            seg_logits, refined_features = decoder(latent_tokens, spatial_shape)
+            seg_logits, refined_features = decoder(latent_tokens, spatial_shape, skip_features)
             cls_logits, _ = classifier(seg_logits, refined_features, gt_labels=seg_targets)
             total_loss, loss_seg, loss_cls = criterion(seg_logits, seg_targets, cls_logits, cls_targets)
 
@@ -72,12 +73,32 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
         seg_targets = batch["label"].to(device)
         cls_targets = batch["grade"].to(device)
 
-        with autocast(device_type=device.type, enabled=(device.type == "cuda")):
-            modality_tokens, spatial_shape = backbone(images)
-            fused_tokens = fusion(modality_tokens, images)
+        # Volumetric evaluation patch collector to compute combined multi-task metrics safely
+        volume_cls_logits = []
+
+        def evaluation_predictor(patch_images):
+            modality_tokens, spatial_shape, skip_features = backbone(patch_images)
+            fused_tokens = fusion(modality_tokens, patch_images)
             latent_tokens = shared_backbone(fused_tokens)
-            seg_logits, refined_features = decoder(latent_tokens, spatial_shape)
-            cls_logits, _ = classifier(seg_logits, refined_features, gt_labels=None)
+            seg_logits, refined_features = decoder(latent_tokens, spatial_shape, skip_features)
+            
+            p_cls_logits, _ = classifier(seg_logits, refined_features, gt_labels=None)
+            volume_cls_logits.append(p_cls_logits)
+            return seg_logits
+
+        with autocast(device_type=device.type, enabled=(device.type == "cuda")):
+            # Perform sliding window inference over full validation volumes to protect VRAM metrics profiles
+            seg_logits = sliding_window_inference(
+                inputs=images,
+                roi_size=config.PATCH_SIZE,
+                sw_batch_size=1,
+                predictor=evaluation_predictor,
+                overlap=0.25,
+                mode="gaussian"
+            )
+            
+            # Aggregate patch-level classification representations back into full macro metrics context
+            cls_logits = torch.stack(volume_cls_logits, dim=0).mean(dim=0)
             total_loss, _, _ = criterion(seg_logits, seg_targets, cls_logits, cls_targets)
 
         running_loss += total_loss.item()
