@@ -40,8 +40,11 @@ class PresenceAwareCrossModalFusion(nn.Module):
         
         # Automatically detect channel dropouts by tracking voxel intensity sums
         # Resulting shape: (B, num_modalities) where 1 = Present, 0 = Absent
-        presence = (x.view(B, self.num_modalities, -1).abs().sum(dim=-1) > 1e-5).float()
+        # presence = (x.view(B, self.num_modalities, -1).abs().sum(dim=-1) > 1e-5).float()
         
+        # FIX 1: Changed .view() to .reshape() to handle non-contiguous sliding window patches
+        presence = (x.reshape(B, self.num_modalities, -1).abs().sum(dim=-1) > 1e-5).float()
+
         processed_tokens = []
         mask_list = []
         
@@ -52,7 +55,10 @@ class PresenceAwareCrossModalFusion(nn.Module):
             tokens = tokens + self.modality_embeds[i]
             
             # Extracts the presence status for modality - i, and reshapes it to match the tokens.
-            p_mask = presence[:, i].view(B, 1, 1)
+            # p_mask = presence[:, i].view(B, 1, 1)
+
+            # FIX 2: Changed .view() to .reshape() to safely format sliced columns
+            p_mask = presence[:, i].reshape(B, 1, 1)
             
             # If present, we keep features and append the present embedding context.
             # If absent, we wipe out normalization/convolutional bias values 
@@ -89,8 +95,10 @@ class PresenceAwareCrossModalFusion(nn.Module):
         
         # Enforce clear explicit view restructuring to safely align broadcasting scales
         # Output Shape: (B, 1, 1) = (1, 1, 1); as B==1 in our case
-        presence_count = presence.sum(dim=1).clamp(min=1.0).view(B, 1, 1)
+        # presence_count = presence.sum(dim=1).clamp(min=1.0).view(B, 1, 1)
         
+        # FIX 3: Changed .view() to .reshape()
+        presence_count = presence.sum(dim=1).clamp(min=1.0).reshape(B, 1, 1)
 
         # Output Shape: (B, L, C)
         unified_tensor = torch.zeros_like(split_tokens[0])
