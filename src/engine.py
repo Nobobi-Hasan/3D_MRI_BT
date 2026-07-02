@@ -189,7 +189,7 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
         train_loss, train_seg, train_cls = train_one_epoch(
             model_components, train_loader, criterion, optimizer, scaler, device
         )
-        print(f"[Train] Total Loss: {train_loss:.4f} | Seg Loss: {train_seg:.4f} | Cls Loss: {train_cls:.4f}")
+        print(f"[Train] Seg Loss: {train_seg:.4f} | Cls Loss: {train_cls:.4f} | Total Loss: {train_loss:.4f}")
 
         val_metrics = validate_one_epoch(model_components, val_loader, criterion, device)
         
@@ -197,7 +197,10 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
         mean_dice = (val_metrics["dice_WT"] + val_metrics["dice_TC"] + val_metrics["dice_ET"]) / 3.0
         combined_score = (0.4 * mean_dice) + (0.3 * val_metrics["macro_f1"]) + (0.3 * val_metrics["roc_auc"])
         
-        print(f"[Val] Loss: {val_metrics['val_loss']:.4f} | Mean Dice: {mean_dice:.4f} | Macro F1: {val_metrics['macro_f1']:.4f} | ROC-AUC: {val_metrics['roc_auc']:.4f} | Combined Score: {combined_score:.4f}")
+        # print(f"[Val] Loss: {val_metrics['val_loss']:.4f} | Mean Dice: {mean_dice:.4f} | Macro F1: {val_metrics['macro_f1']:.4f} | ROC-AUC: {val_metrics['roc_auc']:.4f} | Combined Score: {combined_score:.4f}")
+        print(f"[Val] Segmentation -> Mean Dice: {mean_dice:.4f} (WT: {val_metrics['dice_WT']:.4f}, TC: {val_metrics['dice_TC']:.4f}, ET: {val_metrics['dice_ET']:.4f})")
+        print(f"[Val] Classification -> Macro F1: {val_metrics['macro_f1']:.4f} | ROC-AUC: {val_metrics['roc_auc']:.4f}")
+        print(f"[Val] Combined Score: {combined_score:.4f}")
 
         if scheduler:
             scheduler.step()
@@ -217,6 +220,9 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
             "optimizer_state": optimizer.state_dict(),
             "scheduler_state": scheduler.state_dict() if scheduler else None,
             "scaler_state": scaler.state_dict(),
+            "dice_WT": val_metrics["dice_WT"],
+            "dice_TC": val_metrics["dice_TC"],
+            "dice_ET": val_metrics["dice_ET"],
             "mean_dice": mean_dice,
             "macro_f1": val_metrics["macro_f1"],
             "roc_auc": val_metrics["roc_auc"],
