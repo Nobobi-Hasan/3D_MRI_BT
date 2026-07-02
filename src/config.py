@@ -66,10 +66,12 @@ EMBED_DIM = 96
 # 4. Training Loop Optimization Settings
 # =========================================================================
 # Batch size per step to manage VRAM utilization
-BATCH_SIZE = 1
+BATCH_SIZE = 4
 
-# Total targeted training epochs across sessions
-NUM_EPOCHS = 5
+# Total targeted training epochs across each session
+NUM_EPOCHS = 10
+# Total targeted training epochs across all sessions
+TOTAL_EPOCHS = 150 
 
 # Base optimizer learning parameters
 LEARNING_RATE = 1e-4

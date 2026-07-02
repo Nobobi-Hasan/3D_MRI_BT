@@ -1,5 +1,3 @@
-# src/engine.py
-
 import os
 import torch
 import torch.nn.functional as F
@@ -73,32 +71,50 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
         seg_targets = batch["label"].to(device)
         cls_targets = batch["grade"].to(device)
 
-        # Volumetric evaluation patch collector to compute combined multi-task metrics safely
-        volume_cls_logits = []
+        B_current = images.size(0)
+        batch_seg_logits = []
+        batch_cls_logits = []
 
-        def evaluation_predictor(patch_images):
-            modality_tokens, spatial_shape, skip_features = backbone(patch_images)
-            fused_tokens = fusion(modality_tokens, patch_images)
-            latent_tokens = shared_backbone(fused_tokens)
-            seg_logits, refined_features = decoder(latent_tokens, spatial_shape, skip_features)
+        # Iterate through batch elements individually to align localized sliding window metrics
+        for b in range(B_current):
+            single_img = images[b:b+1]  # Shape: (1, 4, 128, 128, 128)
+            volume_cls_logits = []
+
+            def evaluation_predictor(patch_images):
+                modality_tokens, spatial_shape, skip_features = backbone(patch_images)
+                fused_tokens = fusion(modality_tokens, patch_images)
+                latent_tokens = shared_backbone(fused_tokens)
+                seg_logits, refined_features = decoder(latent_tokens, spatial_shape, skip_features)
+                
+                p_cls_logits, _ = classifier(seg_logits, refined_features, gt_labels=None)
+                volume_cls_logits.append(p_cls_logits)
+                return seg_logits
+
+            with autocast(device_type=device.type, enabled=(device.type == "cuda")):
+                # Perform sliding window inference over a single validation volume to isolate feature scales
+                seg_logits = sliding_window_inference(
+                    inputs=single_img,
+                    roi_size=config.PATCH_SIZE,
+                    sw_batch_size=1,
+                    predictor=evaluation_predictor,
+                    overlap=0.25,
+                    mode="gaussian"
+                )
+                
+                # Aggregate patch-level classification representations using extreme-value selection strategy
+                cls_logits = torch.max(torch.stack(volume_cls_logits, dim=0), dim=0)[0]
             
-            p_cls_logits, _ = classifier(seg_logits, refined_features, gt_labels=None)
-            volume_cls_logits.append(p_cls_logits)
-            return seg_logits
+            batch_seg_logits.append(seg_logits)
+            batch_cls_logits.append(cls_logits)
+
+        # Re-assemble the individual predictions back to match original batch shapes
+        seg_logits = torch.cat(batch_seg_logits, dim=0)  # Shape: (B, 4, 128, 128, 128)
+        cls_logits = torch.cat(batch_cls_logits, dim=0)  # Shape: (B, 2)
+
+        # Defensive assertion to trap batch size dimensions bugs during development loops
+        assert cls_logits.shape[0] == cls_targets.shape[0], f"Dimension mismatch: predictions batch size ({cls_logits.shape[0]}) does not match targets batch size ({cls_targets.shape[0]})."
 
         with autocast(device_type=device.type, enabled=(device.type == "cuda")):
-            # Perform sliding window inference over full validation volumes to protect VRAM metrics profiles
-            seg_logits = sliding_window_inference(
-                inputs=images,
-                roi_size=config.PATCH_SIZE,
-                sw_batch_size=1,
-                predictor=evaluation_predictor,
-                overlap=0.25,
-                mode="gaussian"
-            )
-            
-            # Aggregate patch-level classification representations back into full macro metrics context
-            cls_logits = torch.stack(volume_cls_logits, dim=0).mean(dim=0)
             total_loss, _, _ = criterion(seg_logits, seg_targets, cls_logits, cls_targets)
 
         running_loss += total_loss.item()
