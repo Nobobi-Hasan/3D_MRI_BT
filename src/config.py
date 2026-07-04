@@ -69,7 +69,7 @@ EMBED_DIM = 96
 BATCH_SIZE = 4
 
 # Total targeted training epochs across each session
-NUM_EPOCHS = 10
+NUM_EPOCHS = 25
 # Total targeted training epochs across all sessions
 TOTAL_EPOCHS = 150 
 
