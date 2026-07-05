@@ -10,7 +10,7 @@ DRIVE_PROJECT_ROOT = "/content/drive/MyDrive/ML_Projects/3D_MRI_Brain_Tumor"
 
 # Dataset zip file source path
 ZIP_SOURCE_PATH_RAW = "/content/drive/MyDrive/ML-Datasets/BraTS2020_TrainingData.zip"
-ZIP_SOURCE_PATH = "/content/drive/MyDrive/ML-Datasets/BraTS2020_TrainingData_128.zip"
+ZIP_SOURCE_PATH = "/content/drive/MyDrive/ML-Datasets/BraTS2020_TrainingData_128_Cubic_B_spline.zip"
 
 # Local NVMe scratch space for fast unzipping
 LOCAL_EXTRACT_DIR = "/content"
@@ -69,9 +69,9 @@ EMBED_DIM = 96
 BATCH_SIZE = 4
 
 # Total targeted training epochs across each session
-NUM_EPOCHS = 25
+NUM_EPOCHS = 20
 # Total targeted training epochs across all sessions
-TOTAL_EPOCHS = 150 
+TOTAL_EPOCHS = 150
 
 # Base optimizer learning parameters
 LEARNING_RATE = 1e-4
