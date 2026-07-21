@@ -10,12 +10,12 @@ DRIVE_PROJECT_ROOT = "/content/drive/MyDrive/ML_Projects/3D_MRI_Brain_Tumor"
 
 # Dataset zip file source path
 ZIP_SOURCE_PATH_RAW = "/content/drive/MyDrive/ML-Datasets/BraTS2020_TrainingData.zip"
-ZIP_SOURCE_PATH = "/content/drive/MyDrive/ML-Datasets/BraTS2020_TrainingData_128_Cubic_B_spline.zip"
+ZIP_SOURCE_PATH = "/content/drive/MyDrive/ML-Datasets/BraTS2020_TrainingData_ABC.zip"
 
 # Local NVMe scratch space for fast unzipping
 LOCAL_EXTRACT_DIR = "/content"
 DATA_ROOT_DIR_RAW = os.path.join(LOCAL_EXTRACT_DIR, "MICCAI_BraTS2020_TrainingData")
-DATA_ROOT_DIR = os.path.join(LOCAL_EXTRACT_DIR, "MICCAI_BraTS2020_TrainingData_128")
+DATA_ROOT_DIR = os.path.join(LOCAL_EXTRACT_DIR, "MICCAI_BraTS2020_TrainingData_ABC")
 
 # Metadata and label files inside unzipped dataset
 NAME_MAPPING_CSV = os.path.join(DATA_ROOT_DIR, "name_mapping.csv")
@@ -56,7 +56,7 @@ NUM_SEG_CLASSES = 4
 NUM_CLASS_CLASSES = 2
 
 # Sub-volume dimensions for 3D patch training
-PATCH_SIZE = (64, 64, 64)
+PATCH_SIZE = (96, 96, 96)
 
 # Dimensionality of the token embeddings across the Mamba blocks
 EMBED_DIM = 96
@@ -69,7 +69,7 @@ EMBED_DIM = 96
 BATCH_SIZE = 4
 
 # Total targeted training epochs across each session
-NUM_EPOCHS = 20
+NUM_EPOCHS = 10
 # Total targeted training epochs across all sessions
 TOTAL_EPOCHS = 150
 
