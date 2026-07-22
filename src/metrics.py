@@ -2,7 +2,6 @@
 
 import torch
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
-from sklearn.metrics import f1_score, roc_auc_score
 
 class SegmentationMetrics:
     """Accumulator for true 3D BraTS region evaluation metrics across batches."""
@@ -69,29 +68,3 @@ class SegmentationMetrics:
             })
             
         return metrics_dict
-
-def compute_classification_metrics(all_preds, all_targets, all_probs):
-    """Compute macro-averaged and shape-safe classification metrics."""
-    # to numpy arrays for compatibility with sklearn
-    if isinstance(all_preds, torch.Tensor):
-        all_preds = all_preds.cpu().numpy()
-    if isinstance(all_targets, torch.Tensor):
-        all_targets = all_targets.cpu().numpy()
-    if isinstance(all_probs, torch.Tensor):
-        all_probs = all_probs.cpu().numpy()
-        
-    # Verify the probability tracking array is flattened to a 1D structure
-    if len(all_probs.shape) > 1 and all_probs.shape[1] == 2:
-        all_probs = all_probs[:, 1]
-        
-    f1 = f1_score(all_targets, all_preds, average="macro", zero_division=0)
-    
-    try:
-        auc = roc_auc_score(all_targets, all_probs)
-    except ValueError:
-        auc = 0.5
-        
-    return {
-        "macro_f1": float(f1),
-        "roc_auc": float(auc)
-    }

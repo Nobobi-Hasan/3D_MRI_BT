@@ -5,33 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-#########################################################################################################
-########################################*******************##############################################
-
-# @torch.jit.script
-# def accelerated_ssm_loop(x_conv, B_mat, C_mat, dA, dB):
-#     """Accelerates the sequential state-space scan via a native C++ JIT loop."""
-#     B = x_conv.size(0)
-#     L = x_conv.size(1)
-#     D = x_conv.size(2)
-#     N = B_mat.size(2)
-    
-#     # Initialize contiguous memory allocations
-#     h = torch.zeros(B, D, N, dtype=x_conv.dtype, device=x_conv.device)
-#     ys = torch.empty(B, L, D, dtype=x_conv.dtype, device=x_conv.device)
-    
-#     for t in range(L):
-#         x_t = x_conv[:, t].unsqueeze(-1)       # Shape: (B, D, 1)
-#         h = dA[:, t] * h + dB[:, t] * x_t     # Recurrent update: (B, D, N)
-#         C_t = C_mat[:, t].unsqueeze(1)        # Shape: (B, 1, N)
-#         ys[:, t] = torch.sum(h * C_t, dim=-1) # Project output down to (B, D)
-        
-#     return ys
-
-##############################################################################################
-
-# best till now (13 sec) **********
-
 @torch.jit.script
 def accelerated_ssm_loop(x_conv, B_mat, C_mat, dA, dB):
     """Accelerates the sequential state-space scan via a native C++ JIT loop.
