@@ -89,8 +89,5 @@ MODALITY_DROPOUT_PROB = 0.2
 # Epoch threshold to activate modality dropout (Pseudo-Curriculum Warmup)
 WARMUP_EPOCHS = 20
 
-# Probability of dropping feature tokens before the fusion layer
-FEATURE_DROPOUT_RATE = 0.1
-
 # Weight multiplier for the shared-weight auxiliary decoder loss
 AUX_LOSS_WEIGHT = 0.4
