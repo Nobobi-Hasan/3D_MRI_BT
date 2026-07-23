@@ -32,7 +32,7 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
             # 1. Forward pass through backbone to get standard and single-modality features
             modality_tokens, spatial_shape, skip_features, single_skip_features = backbone(images)
             
-            # --- Phase 5: Pseudo-Curriculum Warmup & Token-Level Feature Dropout ---
+            # --- Phase 5: Pseudo-Curriculum Warmup & Token-Level Modality Dropout ---
             # No dropout during the warmup phase to establish stable initial representations
             current_dropout_rate = 0.0 if epoch < config.WARMUP_EPOCHS else config.MODALITY_DROPOUT_PROB
             
@@ -115,7 +115,6 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
                 # No dropout applied during validation phase
                 fused_tokens = fusion(modality_tokens, patch_images)
                 latent_tokens = shared_backbone(fused_tokens)
-                # Unpack only logits since classification refined_features were removed
                 seg_logits = decoder(latent_tokens, spatial_shape, skip_features)
 
                 return seg_logits

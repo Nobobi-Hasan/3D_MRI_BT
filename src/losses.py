@@ -2,7 +2,7 @@
 
 import torch
 import torch.nn as nn
-from monai.losses import DiceLoss
+from monai.losses import DiceCELoss
 import src.config as config
 
 class SegmentationLoss(nn.Module):
