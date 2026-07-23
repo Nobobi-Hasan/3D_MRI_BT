@@ -1,5 +1,3 @@
-# src/config.py
-
 import os
 
 # =========================================================================
@@ -52,9 +50,6 @@ NUM_MODALITIES = len(MODALITIES)
 # Unique target channels after mapping label 4 to 3
 NUM_SEG_CLASSES = 4
 
-# Tumor grading categories (0: LGG, 1: HGG)
-NUM_CLASS_CLASSES = 2
-
 # Sub-volume dimensions for 3D patch training
 PATCH_SIZE = (64, 64, 64)
 
@@ -91,5 +86,11 @@ NUM_WORKERS = 2
 # Maximum boundary probability for simulating missing input sequence drops
 MODALITY_DROPOUT_PROB = 0.2
 
-# Class penalty weights derived from class counts (294 HGG vs 75 LGG) to handle bias
-CLASSIFICATION_CLASS_WEIGHTS = [3.92, 1.00]
+# Epoch threshold to activate modality dropout (Pseudo-Curriculum Warmup)
+WARMUP_EPOCHS = 20
+
+# Probability of dropping feature tokens before the fusion layer
+FEATURE_DROPOUT_RATE = 0.1
+
+# Weight multiplier for the shared-weight auxiliary decoder loss
+AUX_LOSS_WEIGHT = 0.4

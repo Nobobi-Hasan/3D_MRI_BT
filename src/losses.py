@@ -6,7 +6,6 @@ from monai.losses import DiceLoss
 import src.config as config
 
 class SegmentationLoss(nn.Module):
-    """Custom multi-task loss function bor both - segmentation and weighted classification."""
     def __init__(self):
         super().__init__()
         # MONAI Dice Loss for segmentation

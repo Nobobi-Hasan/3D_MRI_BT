@@ -1,3 +1,5 @@
+# src/engine.py
+
 import os
 import torch
 import torch.nn.functional as F
@@ -5,7 +7,7 @@ from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 from monai.inferers import sliding_window_inference
 import src.config as config
-from src.metrics import SegmentationMetrics, compute_classification_metrics
+from src.metrics import SegmentationMetrics
 
 def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, device):
     """Trains all 5 architectural model components concurrently for one epoch."""
