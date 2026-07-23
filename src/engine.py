@@ -72,7 +72,7 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
                 modality_tokens, spatial_shape, skip_features = backbone(patch_images)
                 fused_tokens = fusion(modality_tokens, patch_images)
                 latent_tokens = shared_backbone(fused_tokens)
-                seg_logits, refined_features = decoder(latent_tokens, spatial_shape, skip_features)
+                seg_logits = decoder(latent_tokens, spatial_shape, skip_features)
 
                 return seg_logits
 

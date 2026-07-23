@@ -117,31 +117,6 @@ class BiMambaInnerLayer3D(nn.Module):
         self.dt_fwd_param = nn.Parameter(torch.log(dt_fwd))
         self.dt_bwd_param = nn.Parameter(torch.log(dt_bwd))
 
-    # def _ssm_scan(self, u, conv1d_layer, x_proj_layer, dt_param, A_log):
-    #     """Streamlined SSM Scan optimized to run efficiently with downsampled sequences."""
-    #     x_conv = F.silu(conv1d_layer(u.transpose(1, 2)).transpose(1, 2))
-    #     x_pt = x_proj_layer(x_conv)
-        
-    #     delta, B_mat, C_mat = torch.split(x_pt, [self.d_inner, self.d_state, self.d_state], dim=-1)
-    #     delta = F.softplus(delta + dt_param)
-        
-    #     A = -torch.exp(A_log)
-        
-    #     dA = torch.exp(delta.unsqueeze(-1) * A.unsqueeze(0).unsqueeze(0))
-    #     dB = delta.unsqueeze(-1) * B_mat.unsqueeze(-2)
-        
-    #     # Sequentially scan tokens; sequence length (1,728) prevents performance bottlenecks
-    #     h = torch.zeros(u.size(0), self.d_inner, self.d_state, device=u.device)
-    #     ys = []
-    #     for t in range(u.size(1)):
-    #         x_t = x_conv[:, t].unsqueeze(-1)
-    #         h = dA[:, t] * h + dB[:, t] * x_t
-    #         C_t = C_mat[:, t].unsqueeze(1)
-    #         y = torch.sum(h * C_t, dim=-1)
-    #         ys.append(y)
-            
-    #     return torch.stack(ys, dim=1)
-
     def _ssm_scan(self, u, conv1d_layer, x_proj_layer, dt_param, A_log):
         """Pre-computes state matrices and transfers processing to the JIT compiled loop."""
         x_conv = F.silu(conv1d_layer(u.transpose(1, 2)).transpose(1, 2))
@@ -231,8 +206,11 @@ class MambaBackbone(nn.Module):
             torch.cat(feat1_list, dim=1),  # Combined Level 1 maps: shape (B, 4 * 48, 32, 32, 32)
             torch.cat(feat2_list, dim=1)   # Combined Level 2 maps: shape (B, 4 * 96, 16, 16, 16)
         ]
+        
+        # Pack individual multi-scale spatial maps for auxiliary single-modality decoding
+        single_skip_features = [feat1_list, feat2_list]
             
-        return modality_tokens, spatial_shapes, skip_features
+        return modality_tokens, spatial_shapes, skip_features, single_skip_features
 
 class SharedDeepMambaBackbone(nn.Module):
     """Phase 3: Stage 3 - Shared Deep Mamba Backbone.

@@ -83,7 +83,6 @@ class SegmentationDecoder3D(nn.Module):
                                                skip_features[1]: shape (B, 384, 16, 16, 16)
         Returns:
             logits (Tensor): 3D segmentation logits of shape (B, 4, 64, 64, 64)
-            refined_features (Tensor): to assist Morphology-Guided Classification.
         """
         B, L, C = latent_tokens.shape
         H_p, W_p, D_p = spatial_shape
@@ -113,4 +112,65 @@ class SegmentationDecoder3D(nn.Module):
         
         logits = self.seg_head(out)        # (B, 4, 64, 64, 64)
         
-        return logits, refined_features
+        return logits
+
+
+class AuxiliaryDecoder3D(nn.Module):
+    """Phase 4.3: Shared-Weight Auxiliary Decoder.
+    Reconstructs volumetric representations for single unmasked modalities
+    to provide independent supervision and ensure balanced modality learning.
+    """
+    def __init__(self, embed_dim=96, out_channels=4):
+        super().__init__()
+        self.embed_dim = embed_dim
+        
+        # 4.3.1 Spatial Attention block (Shared architecture logic)
+        self.spatial_attention = SpatialAttention3D(channels=embed_dim)
+        
+        # 4.3.2 Hierarchical Upsampling Blocks: Reconstructs 8x8x8 -> 64x64x64
+        self.layer1 = DecoderBlock3D(in_channels=embed_dim, out_channels=64)  
+        
+        # Layer 2 handles Layer 1 output (64 ch) + Raw Level 2 single-modal skips (96 ch) -> Total 160 ch
+        self.layer2 = DecoderBlock3D(in_channels=64 + 96, out_channels=32)        
+        
+        # Layer 3 handles Layer 2 output (32 ch) + Raw Level 1 single-modal skips (48 ch) -> Total 80 ch
+        self.layer3 = DecoderBlock3D(in_channels=32 + 48, out_channels=16)        
+        
+        # Final Segmentation Head mapping to 4 target structural target regions
+        self.seg_head = nn.Conv3d(16, out_channels, kernel_size=1)
+
+    def forward(self, latent_tokens, spatial_shape, skip_features):
+        """
+        Args:
+            latent_tokens (Tensor): Single modality latent representation.
+                                    Shape: (B, L, embed_dim)
+            spatial_shape (tuple): Target grid shape (H_p, W_p, D_p) matching token shape (8, 8, 8)
+            skip_features (list of 2 Tensors): Multi-scale spatial feature maps from ONE encoder stem.
+                                               skip_features[0]: shape (B, 48, 32, 32, 32)
+                                               skip_features[1]: shape (B, 96, 16, 16, 16)
+        Returns:
+            logits (Tensor): 3D segmentation logits of shape (B, 4, 64, 64, 64)
+        """
+        B, L, C = latent_tokens.shape
+        H_p, W_p, D_p = spatial_shape
+        
+        # Re-assemble 1D token streams back into standard 3D spatial grids
+        x = latent_tokens.view(B, H_p, W_p, D_p, C).permute(0, 4, 1, 2, 3).contiguous()
+        
+        # Phase 4.3.1: Apply spatial attention refinement
+        refined_features = self.spatial_attention(x)
+        
+        # Phase 4.3.2: Progressive volumetric reconstruction path with skip connections
+        out = self.layer1(refined_features) 
+        
+        # Direct concatenation of single-modality Level 2 skips (no projection)
+        out = torch.cat([out, skip_features[1]], dim=1) 
+        out = self.layer2(out)             
+        
+        # Direct concatenation of single-modality Level 1 skips (no projection)
+        out = torch.cat([out, skip_features[0]], dim=1) 
+        out = self.layer3(out)             
+        
+        logits = self.seg_head(out)        
+        
+        return logits
