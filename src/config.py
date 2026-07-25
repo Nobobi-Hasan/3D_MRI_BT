@@ -69,11 +69,14 @@ NUM_EPOCHS = 20
 TOTAL_EPOCHS = 150
 
 # Base optimizer learning parameters
-LEARNING_RATE = 1e-4
-WEIGHT_DECAY = 1e-5
+# LEARNING_RATE = 1e-4
+# WEIGHT_DECAY = 1e-5
+
+LEARNING_RATE = 2e-4
+WEIGHT_DECAY = 1e-4
 
 # Lowest learning rate boundary for the scheduler decay cycle
-ETA_MIN = 1e-6
+ETA_MIN = 1e-6 # required only for CosineAnnealingWarmRestarts scheduler
 
 # Safe RAM cache threshold for MONAI CacheDataset on Free Colab
 CACHE_RATE = 0.0  # was 0.3 earlier (session crached due to RAM overload)
