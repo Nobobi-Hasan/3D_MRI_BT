@@ -49,6 +49,15 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
                     keep_mask[torch.randint(0, num_mods, (1,)).item()] = 1.0
             
             processed_images = images.clone()
+            
+            # Clone skip features to apply skip connection masking without mutating the original tensors 
+            # (since original unmasked features are strictly required for the aux pathway)
+            processed_skip_features = [skip_features[0].clone(), skip_features[1].clone()]
+            
+            # Calculate channel chunks per modality dynamically
+            skip1_chunk = processed_skip_features[0].size(1) // num_mods
+            skip2_chunk = processed_skip_features[1].size(1) // num_mods
+
             for i in range(num_mods):
                 if keep_mask[i] == 1.0:
                     processed_modality_tokens.append(modality_tokens[i])
@@ -57,12 +66,19 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
                     # Replace dropped modality tokens and original image channels with zeros
                     processed_modality_tokens.append(torch.zeros_like(modality_tokens[i]))
                     processed_images[:, i, :, :, :] = 0.0
+                    
+                    # Apply Skip Connection Masking: Zero out the corresponding channel chunks for dropped modalities
+                    # This prevents data leakage where missing modality features bypass the fusion module via the skip connection
+                    processed_skip_features[0][:, i * skip1_chunk : (i + 1) * skip1_chunk, :, :, :] = 0.0
+                    processed_skip_features[1][:, i * skip2_chunk : (i + 1) * skip2_chunk, :, :, :] = 0.0
             # -----------------------------------------------------------------------
 
             # 2. Main Pathway (Pathway B): Process fused masked features
             fused_tokens = fusion(processed_modality_tokens, processed_images)
             latent_tokens = shared_backbone(fused_tokens)
-            seg_logits = decoder(latent_tokens, spatial_shape, skip_features)
+            
+            # Feed the strictly masked skip features to the main decoder
+            seg_logits = decoder(latent_tokens, spatial_shape, processed_skip_features)
             
             # 3. Auxiliary Pathway (Pathway A): Independent supervision on unmasked modalities
             aux_preds = []
