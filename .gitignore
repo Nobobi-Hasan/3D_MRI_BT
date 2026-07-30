@@ -10,7 +10,6 @@ venv/
 .env
 
 # Datasets
-data/
 datasets/
 
 checkpoints/
