@@ -93,22 +93,34 @@ class PresenceAwareCrossModalFusion(nn.Module):
         # Output Shape = 4 separate (B, L, c)
         split_tokens = torch.chunk(combined_tokens, self.num_modalities, dim=1)
         
-        # Enforce clear explicit view restructuring to safely align broadcasting scales
-        # Output Shape: (B, 1, 1) = (1, 1, 1); as B==1 in our case
-        # presence_count = presence.sum(dim=1).clamp(min=1.0).view(B, 1, 1)
+        #########################################################################################################################
         
-        # FIX 3: Changed .view() to .reshape()
-        presence_count = presence.sum(dim=1).clamp(min=1.0).reshape(B, 1, 1)
+        # # FIX 3: Changed .view() to .reshape()
+        # presence_count = presence.sum(dim=1).clamp(min=1.0).reshape(B, 1, 1)
 
-        # Output Shape: (B, L, C)
-        unified_tensor = torch.zeros_like(split_tokens[0])
-        for i in range(self.num_modalities):
-            p_mask = presence[:, i].view(B, 1, 1)
-            unified_tensor = unified_tensor + (split_tokens[i] * p_mask)
+        # # Output Shape: (B, L, C)
+        # unified_tensor = torch.zeros_like(split_tokens[0])
+        # for i in range(self.num_modalities):
+        #     p_mask = presence[:, i].view(B, 1, 1)
+        #     unified_tensor = unified_tensor + (split_tokens[i] * p_mask)
             
-        # Average only the available modality representations so feature remains consistent when one or more modalities are missing.
-        # Output Shape: (B, L, C)
-        unified_tensor = unified_tensor / presence_count
+        # # Average only the available modality representations so feature remains consistent when one or more modalities are missing.
+        # # Output Shape: (B, L, C)
+        # unified_tensor = unified_tensor / presence_count
+
+        #########################################################################################################################
+        #########################################################################################################################
+
+        # Channel-wise Concatenation & Projection (Replaces Averaging)
+        # 1. Concatenate along the channel dimension (dim=-1)
+        # Output Shape: (B, L, C * num_modalities) = (B, L, 384)
+        concat_tokens = torch.cat(split_tokens, dim=-1)
+        
+        # 2. Pass through the projection layer to compress and intelligently fuse
+        # Output Shape: (B, L, C) = (B, L, 96)
+        unified_tensor = self.fusion_proj(concat_tokens)
+
+        #########################################################################################################################
         
         # Output Shape: (B, L, C)
         return unified_tensor
