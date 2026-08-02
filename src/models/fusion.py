@@ -24,6 +24,15 @@ class PresenceAwareCrossModalFusion(nn.Module):
         # Stage 2: Cross-Modal Attention mechanism
         self.cross_attn = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads, batch_first=True)
         self.norm = nn.LayerNorm(embed_dim)
+
+        # New Added for Concatenation + Projection instead of averaging the fused features after cross attention.
+        # Compresses concatenated features from (B, L, 384) back to (B, L, 96)
+        # Assuming 4 modalities; and an embedding dimension of 96: 4 * 96 = 384
+        self.fusion_proj = nn.Sequential(
+            nn.Linear(embed_dim * num_modalities, embed_dim),
+            nn.LayerNorm(embed_dim),
+            nn.GELU()
+        )
         
     def forward(self, modality_tokens, x):
         """

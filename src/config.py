@@ -1,3 +1,5 @@
+# src/config.py 
+
 import os
 
 # =========================================================================
@@ -35,9 +37,9 @@ BEST_CHECKPOINT = os.path.join(CHECKPOINT_DIR, "best_model.pth")
 RANDOM_SEED = 42
 
 # 80/10/10 data split ratios
-TRAIN_RATIO = 0.80
-VAL_RATIO = 0.10
-TEST_RATIO = 0.10
+# TRAIN_RATIO = 0.80
+# VAL_RATIO = 0.10
+# TEST_RATIO = 0.10
 
 
 # =========================================================================
@@ -64,19 +66,19 @@ EMBED_DIM = 96
 BATCH_SIZE = 4
 
 # Total targeted training epochs across each session
-NUM_EPOCHS = 12
+NUM_EPOCHS = 20
 # Total targeted training epochs across all sessions
-TOTAL_EPOCHS = 150
+TOTAL_EPOCHS = 300
 
 # Base optimizer learning parameters
 # LEARNING_RATE = 1e-4
 # WEIGHT_DECAY = 1e-5
 
 LEARNING_RATE = 2e-4
-WEIGHT_DECAY = 1e-4
+WEIGHT_DECAY = 1e-5
 
 # Lowest learning rate boundary for the scheduler decay cycle
-ETA_MIN = 1e-6 # required only for CosineAnnealingWarmRestarts scheduler
+# ETA_MIN = 1e-6 # required only for CosineAnnealingWarmRestarts scheduler
 
 # Safe RAM cache threshold for MONAI CacheDataset on Free Colab
 CACHE_RATE = 0.0  # was 0.3 earlier (session crached due to RAM overload)
