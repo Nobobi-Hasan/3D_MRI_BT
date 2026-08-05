@@ -7,6 +7,8 @@ class PresenceAwareCrossModalFusion(nn.Module):
     """Phase 3: Stage 2 - Presence-Aware Cross-Modal Attention Fusion.
     Maps multimodal inputs and adjusts attention weights to isolate and
     compensate for missing modalities using learnable presence tokens.
+    
+    *Upgraded with IQ-RDA Block for O(1) spatial complexity and relational consistency.*
     """
     def __init__(self, embed_dim=96, num_heads=4, num_modalities=4):
         super().__init__()
@@ -21,11 +23,24 @@ class PresenceAwareCrossModalFusion(nn.Module):
         self.present_emb = nn.Parameter(torch.randn(num_modalities, 1, embed_dim) * 0.02)
         self.absent_emb = nn.Parameter(torch.randn(num_modalities, 1, embed_dim) * 0.02)
 
-        # Stage 2: Cross-Modal Attention mechanism
-        self.cross_attn = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads, batch_first=True)
-        self.norm = nn.LayerNorm(embed_dim)
+        # --- NEW: IQ-RDA Block Components ---
+        # Step B: Intrinsic Quality Estimator (Q_i)
+        self.iq_mlp = nn.Sequential(
+            nn.Linear(embed_dim, embed_dim // 2),
+            nn.GELU(),
+            nn.Linear(embed_dim // 2, 1)
+        )
 
-        # New Added for Concatenation + Projection instead of averaging the fused features after cross attention.
+        # Step C: Relational Consistency Estimator (\Delta R_i)
+        self.rel_attn = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads, batch_first=True)
+        self.rel_mlp = nn.Sequential(
+            nn.Linear(embed_dim, embed_dim // 2),
+            nn.GELU(),
+            nn.Linear(embed_dim // 2, 1)
+        )
+        # ------------------------------------
+
+        # Channel-wise Concatenation + Projection 
         # Compresses concatenated features from (B, L, 384) back to (B, L, 96)
         # Assuming 4 modalities; and an embedding dimension of 96: 4 * 96 = 384
         self.fusion_proj = nn.Sequential(
@@ -47,15 +62,10 @@ class PresenceAwareCrossModalFusion(nn.Module):
         B, _, _, _, _ = x.shape
         L = modality_tokens[0].size(1)
         
-        # Automatically detect channel dropouts by tracking voxel intensity sums
-        # Resulting shape: (B, num_modalities) where 1 = Present, 0 = Absent
-        # presence = (x.view(B, self.num_modalities, -1).abs().sum(dim=-1) > 1e-5).float()
-        
         # FIX 1: Changed .view() to .reshape() to handle non-contiguous sliding window patches
         presence = (x.reshape(B, self.num_modalities, -1).abs().sum(dim=-1) > 1e-5).float()
 
         processed_tokens = []
-        mask_list = []
         
         for i in range(self.num_modalities):
             tokens = modality_tokens[i] # Shape: (B, L, C)
@@ -63,73 +73,73 @@ class PresenceAwareCrossModalFusion(nn.Module):
             # Inject structural modality identity context
             tokens = tokens + self.modality_embeds[i]
             
-            # Extracts the presence status for modality - i, and reshapes it to match the tokens.
-            # p_mask = presence[:, i].view(B, 1, 1)
-
             # FIX 2: Changed .view() to .reshape() to safely format sliced columns
             p_mask = presence[:, i].reshape(B, 1, 1)
             
             # If present, we keep features and append the present embedding context.
             # If absent, we wipe out normalization/convolutional bias values 
             # leaking from the backbone and replace them with a pure learnable absent embedding.
-            # Output size: (batch_size, token length, channel(features per token)) = (1, 1728, 96)
             tokens = (tokens + self.present_emb[i]) * p_mask + self.absent_emb[i] * (1.0 - p_mask)
             processed_tokens.append(tokens)
             
-            # Construct key padding mask values: True = ignore/mask out during Softmax
-            m = (presence[:, i] == 0).unsqueeze(-1).repeat(1, L) # Shape: (B, L)
-            mask_list.append(m)
-            
-        # Concatenate tokens along sequence layout axis: shape (B, 4 * L, C)
-        combined_tokens = torch.cat(processed_tokens, dim=1)
+        # Step A: Global Average Pooling (Spatial to Summary)
+        # Stack tokens along modality axis: shape (B, 4, L, C)
+        stacked_tokens = torch.stack(processed_tokens, dim=1)
         
-        # Concatenate padding vectors along key layout axis: shape (B, 4 * L)
-        key_padding_mask = torch.cat(mask_list, dim=1)
+        # Pool spatial dimension L: shape (B, 4, C)
+        summary_tokens = stacked_tokens.mean(dim=2)
         
-        # Execute Presence-aware multi-head cross attention routing
-        attn_out, _ = self.cross_attn(
-            query=combined_tokens,
-            key=combined_tokens,
-            value=combined_tokens,
-            key_padding_mask=key_padding_mask
+        # Step B: Intrinsic Quality Estimator (Q_i)
+        q_i = self.iq_mlp(summary_tokens) # Shape: (B, 4, 1)
+        
+        # Step C: Relational Consistency Estimator (\Delta R_i)
+        # 1. Diagonal Masking (Block self-attention)
+        attn_mask = torch.zeros(self.num_modalities, self.num_modalities, device=x.device)
+        attn_mask.fill_diagonal_(float('-inf'))
+        
+        # 2. Absence Masking (True = ignore/mask out)
+        key_padding_mask = (presence == 0.0) # Shape: (B, 4)
+        
+        # Execute cross-relational attention
+        attn_out, _ = self.rel_attn(
+            query=summary_tokens,
+            key=summary_tokens,
+            value=summary_tokens,
+            key_padding_mask=key_padding_mask,
+            attn_mask=attn_mask,
+            need_weights=False
         )
         
-        # Apply normalization with residual connection layer
-        # Output Shape = (B, L*4, c)
-        combined_tokens = self.norm(combined_tokens + attn_out)
+        # Handle N=1 or fully masked rows which natively return NaNs in PyTorch MultiheadAttention
+        attn_out = torch.nan_to_num(attn_out, nan=0.0)
         
-        # Deconstruct sequence back into 4 separate modality blocks
-        # Output Shape = 4 separate (B, L, c)
-        split_tokens = torch.chunk(combined_tokens, self.num_modalities, dim=1)
+        # Compute \Delta R_i
+        delta_r_i = self.rel_mlp(attn_out) # Shape: (B, 4, 1)
         
-        #########################################################################################################################
+        # N=1 Handling: If only 1 modality is present, Relational Consistency must default to 0
+        presence_count = presence.sum(dim=1, keepdim=True).unsqueeze(-1) # Shape: (B, 1, 1)
+        delta_r_i = torch.where(presence_count <= 1, torch.zeros_like(delta_r_i), delta_r_i)
         
-        # # FIX 3: Changed .view() to .reshape()
-        # presence_count = presence.sum(dim=1).clamp(min=1.0).reshape(B, 1, 1)
-
-        # # Output Shape: (B, L, C)
-        # unified_tensor = torch.zeros_like(split_tokens[0])
-        # for i in range(self.num_modalities):
-        #     p_mask = presence[:, i].view(B, 1, 1)
-        #     unified_tensor = unified_tensor + (split_tokens[i] * p_mask)
-            
-        # # Average only the available modality representations so feature remains consistent when one or more modalities are missing.
-        # # Output Shape: (B, L, C)
-        # unified_tensor = unified_tensor / presence_count
-
-        #########################################################################################################################
-        #########################################################################################################################
-
-        # Channel-wise Concatenation & Projection (Replaces Averaging)
-        # 1. Concatenate along the channel dimension (dim=-1)
-        # Output Shape: (B, L, C * num_modalities) = (B, L, 384)
-        concat_tokens = torch.cat(split_tokens, dim=-1)
+        # Step D: Dual-Scale Fusion & Gating
+        total_score = q_i + delta_r_i # Shape: (B, 4, 1)
         
-        # 2. Pass through the projection layer to compress and intelligently fuse
+        # Masked Softmax: Force missing modalities to -inf so they softmax to 0.0
+        total_score = total_score.masked_fill(key_padding_mask.unsqueeze(-1), float('-inf'))
+        reliability_weights = torch.softmax(total_score, dim=1) # Shape: (B, 4, 1)
+        
+        # --- Final Fusion Execution ---
+        
+        # Apply reliability weights to the original spatial tokens
+        # Broadcasting: (B, 4, L, C) * (B, 4, 1, 1) -> shape (B, 4, L, C)
+        weighted_tokens = stacked_tokens * reliability_weights.unsqueeze(2)
+        
+        # Channel-wise Concatenation & Projection 
+        # Flatten back into concatenated form: (B, 4, L, C) -> (B, L, 4, C) -> (B, L, 384)
+        weighted_concat = weighted_tokens.transpose(1, 2).reshape(B, L, -1)
+        
+        # Pass through the projection layer to compress and intelligently fuse
         # Output Shape: (B, L, C) = (B, L, 96)
-        unified_tensor = self.fusion_proj(concat_tokens)
-
-        #########################################################################################################################
+        unified_tensor = self.fusion_proj(weighted_concat)
         
         # Output Shape: (B, L, C)
         return unified_tensor
