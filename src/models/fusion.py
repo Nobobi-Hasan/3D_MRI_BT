@@ -23,7 +23,7 @@ class PresenceAwareCrossModalFusion(nn.Module):
         self.present_emb = nn.Parameter(torch.randn(num_modalities, 1, embed_dim) * 0.02)
         self.absent_emb = nn.Parameter(torch.randn(num_modalities, 1, embed_dim) * 0.02)
 
-        # --- NEW: IQ-RDA Block Components ---
+        # --- IQ-RDA Block Components ---
         # Step B: Intrinsic Quality Estimator (Q_i)
         self.iq_mlp = nn.Sequential(
             nn.Linear(embed_dim, embed_dim // 2),
@@ -33,6 +33,7 @@ class PresenceAwareCrossModalFusion(nn.Module):
 
         # Step C: Relational Consistency Estimator (\Delta R_i)
         self.rel_attn = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads, batch_first=True)
+        self.rel_norm = nn.LayerNorm(embed_dim) # Added for (Stability)
         self.rel_mlp = nn.Sequential(
             nn.Linear(embed_dim, embed_dim // 2),
             nn.GELU(),
@@ -93,25 +94,35 @@ class PresenceAwareCrossModalFusion(nn.Module):
         q_i = self.iq_mlp(summary_tokens) # Shape: (B, 4, 1)
         
         # Step C: Relational Consistency Estimator (\Delta R_i)
-        # 1. Diagonal Masking (Block self-attention)
-        attn_mask = torch.zeros(self.num_modalities, self.num_modalities, device=x.device)
-        attn_mask.fill_diagonal_(float('-inf'))
         
-        # 2. Absence Masking (True = ignore/mask out)
-        key_padding_mask = (presence == 0.0) # Shape: (B, 4)
+        # Combine Diagonal & Absence Masks into a single 3D mask
+        # 1. Diagonal Mask (Block self-attention) - Shape: (4, 4)
+        diag_mask = torch.eye(self.num_modalities, dtype=torch.bool, device=x.device)
         
-        # Execute cross-relational attention
+        # 2. Absence Mask (True = ignore/mask out) - Shape: (B, 4, 4)
+        is_absent = (presence == 0.0) # Shape: (B, 4)
+        absent_mask = is_absent.unsqueeze(1).expand(B, self.num_modalities, self.num_modalities)
+        
+        # 3. Merge masks and format to PyTorch's required (B * num_heads, 4, 4)
+        combined_mask = diag_mask.unsqueeze(0) | absent_mask
+        attn_mask = torch.zeros((B, self.num_modalities, self.num_modalities), device=x.device)
+        attn_mask = attn_mask.masked_fill(combined_mask, float('-inf'))
+        attn_mask = attn_mask.repeat_interleave(self.num_heads, dim=0) 
+        
+        # Execute cross-relational attention (key_padding_mask removed to avoid PyTorch conflict)
         attn_out, _ = self.rel_attn(
             query=summary_tokens,
             key=summary_tokens,
             value=summary_tokens,
-            key_padding_mask=key_padding_mask,
             attn_mask=attn_mask,
             need_weights=False
         )
         
         # Handle N=1 or fully masked rows which natively return NaNs in PyTorch MultiheadAttention
         attn_out = torch.nan_to_num(attn_out, nan=0.0)
+        
+        # Add Residual Connection & LayerNorm
+        attn_out = self.rel_norm(summary_tokens + attn_out)
         
         # Compute \Delta R_i
         delta_r_i = self.rel_mlp(attn_out) # Shape: (B, 4, 1)
@@ -124,7 +135,7 @@ class PresenceAwareCrossModalFusion(nn.Module):
         total_score = q_i + delta_r_i # Shape: (B, 4, 1)
         
         # Masked Softmax: Force missing modalities to -inf so they softmax to 0.0
-        total_score = total_score.masked_fill(key_padding_mask.unsqueeze(-1), float('-inf'))
+        total_score = total_score.masked_fill(is_absent.unsqueeze(-1), float('-inf'))
         reliability_weights = torch.softmax(total_score, dim=1) # Shape: (B, 4, 1)
         
         # --- Final Fusion Execution ---
