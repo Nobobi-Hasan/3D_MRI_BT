@@ -46,14 +46,20 @@ class SingleModalityConvStem3D(nn.Module):
     """
     def __init__(self, out_channels=96):
         super().__init__()
-        # Layer 1: 64x64x64 -> 32x32x32
+        # Layer 1: 64x64x64 -> 64x64x64 (New Stride-1 block for high-res edge details)
         self.layer1 = nn.Sequential(
-            nn.Conv3d(1, out_channels // 2, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.Conv3d(1, out_channels // 4, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.GroupNorm(8, out_channels // 4),
+            nn.GELU()
+        )
+        # Layer 2: 64x64x64 -> 32x32x32 (Former Layer 1)
+        self.layer2 = nn.Sequential(
+            nn.Conv3d(out_channels // 4, out_channels // 2, kernel_size=3, stride=2, padding=1, bias=False),
             nn.GroupNorm(8, out_channels // 2),
             nn.GELU()
         )
-        # Layer 2: 32x32x32 -> 16x16x16
-        self.layer2 = nn.Sequential(
+        # Layer 3: 32x32x32 -> 16x16x16 (Former Layer 2)
+        self.layer3 = nn.Sequential(
             nn.Conv3d(out_channels // 2, out_channels, kernel_size=3, stride=2, padding=1, bias=False),
             nn.GroupNorm(8, out_channels),
             nn.GELU()
@@ -62,7 +68,8 @@ class SingleModalityConvStem3D(nn.Module):
     def forward(self, x):
         feat1 = self.layer1(x)
         feat2 = self.layer2(feat1)
-        return feat1, feat2
+        feat3 = self.layer3(feat2)
+        return feat1, feat2, feat3
 
 class OverlappingPatchEmbed3D(nn.Module):
     """Phase 2.2: Converts downsampled 3D feature (from 2.1) maps into overlapping volumetric tokens.
@@ -185,11 +192,12 @@ class MambaBackbone(nn.Module):
         # Lists to collect high-resolution multi-scale spatial feature maps across modalities
         feat1_list = []
         feat2_list = []
+        feat3_list = []
         
         for i in range(num_mods):
             mod_channel = x[:, i:i+1, :, :, :]
-            feat1, feat2 = self.stems[i](mod_channel)
-            tokens, patch_shape = self.patch_embeds[i](feat2)
+            feat1, feat2, feat3 = self.stems[i](mod_channel)
+            tokens, patch_shape = self.patch_embeds[i](feat3)
             
             if i == 0:
                 spatial_shapes = patch_shape  # Expected shape layout: (8, 8, 8)
@@ -200,15 +208,17 @@ class MambaBackbone(nn.Module):
             # Append spatial maps for cross-modal skip fusion layout
             feat1_list.append(feat1)
             feat2_list.append(feat2)
+            feat3_list.append(feat3)
             
         # Concatenate multi-modal spatial maps along the channel axis to preserve structural information
         skip_features = [
-            torch.cat(feat1_list, dim=1),  # Combined Level 1 maps: shape (B, 4 * 48, 32, 32, 32)
-            torch.cat(feat2_list, dim=1)   # Combined Level 2 maps: shape (B, 4 * 96, 16, 16, 16)
+            torch.cat(feat1_list, dim=1),  # Combined Level 1 maps: shape (B, 4 * 24, 64, 64, 64)
+            torch.cat(feat2_list, dim=1),  # Combined Level 2 maps: shape (B, 4 * 48, 32, 32, 32)
+            torch.cat(feat3_list, dim=1)   # Combined Level 3 maps: shape (B, 4 * 96, 16, 16, 16)
         ]
         
         # Pack individual multi-scale spatial maps for auxiliary single-modality decoding
-        single_skip_features = [feat1_list, feat2_list]
+        single_skip_features = [feat1_list, feat2_list, feat3_list]
             
         return modality_tokens, spatial_shapes, skip_features, single_skip_features
 

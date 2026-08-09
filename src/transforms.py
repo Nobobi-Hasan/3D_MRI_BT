@@ -15,7 +15,7 @@ from monai.transforms import (
     RandGaussianNoised,
     RandGaussianSmoothd,
     RandScaleIntensityd,
-    RandAdjustGammad
+    RandAdjustContrastd
 )
 import src.config as config
 
@@ -65,7 +65,7 @@ def get_train_transforms():
             sigma_z=(0.5, 1.0)
         ),
         RandScaleIntensityd(keys="image", factors=0.1, prob=0.15),
-        RandAdjustGammad(keys=["image"], gamma=(0.7, 1.5), prob=0.15),
+        RandAdjustContrastd(keys=["image"], gamma=(0.7, 1.5), prob=0.15),
 
         # Casting data to precise torch types
         CastToTyped(keys=["image", "label"], dtype=[torch.float32, torch.int64])
