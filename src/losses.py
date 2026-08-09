@@ -8,8 +8,13 @@ import src.config as config
 class SegmentationLoss(nn.Module):
     def __init__(self, aux_weight=0.4):
         super().__init__()
+        # Class weights for BraTS (Background: 0.1, NCR: 1.5, ED: 1.0, ET: 2.0)
+        # persistent=False prevents it from breaking existing checkpoint state_dicts
+        self.register_buffer('class_weights', torch.tensor([0.1, 1.5, 1.0, 2.0]), persistent=False)
+        
         # MONAI DiceCE Loss combines Dice and Cross Entropy for better stability
-        self.dice_ce_loss = DiceCELoss(to_onehot_y=True, softmax=True)
+        self.dice_ce_loss = DiceCELoss(to_onehot_y=True, softmax=True, ce_weight=self.class_weights)
+        
         # Weight for the shared-weight auxiliary decoder supervision
         self.aux_weight = getattr(config, 'AUX_LOSS_WEIGHT', aux_weight)
 

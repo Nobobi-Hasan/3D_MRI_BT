@@ -85,6 +85,11 @@ class OverlappingPatchEmbed3D(nn.Module):
             padding=(patch_size - stride) // 2
         )
         self.norm = nn.LayerNorm(embed_dim)
+        
+        # --- Learnable 3D Absolute Positional Embeddings ---
+        # 8x8x8 spatial grid = 512 tokens
+        self.pos_embed = nn.Parameter(torch.randn(1, 512, embed_dim) * 0.02)
+        # --------------------------------------------------------
 
     def forward(self, x):
         x = self.proj(x)  # Shape: (B, embed_dim, 8, 8, 8)
@@ -92,6 +97,11 @@ class OverlappingPatchEmbed3D(nn.Module):
         # Flatten spatial structures into a clean 1D token sequence sequence stream
         x = x.permute(0, 2, 3, 4, 1).contiguous().view(B, H * W * D, C)
         x = self.norm(x)
+        
+        # --- Inject 3D positional awareness directly into the tokens ---
+        x = x + self.pos_embed
+        # --------------------------------------------------------------------
+        
         return x, (H, W, D)
 
 class BiMambaInnerLayer3D(nn.Module):
