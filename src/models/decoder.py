@@ -50,24 +50,37 @@ class SegmentationDecoder3D(nn.Module):
         self.layer1 = DecoderBlock3D(in_channels=embed_dim, out_channels=64)  
         
         # 1x1x1 Conv projections to compress multi-modal skip features and save memory
-        self.skip2_proj = nn.Sequential(
+        self.skip3_proj = nn.Sequential(
             nn.Conv3d(384, 128, kernel_size=1, bias=False),
             nn.GroupNorm(8, 128),
             nn.GELU()
         )
-        self.skip1_proj = nn.Sequential(
+        self.skip2_proj = nn.Sequential(
             nn.Conv3d(192, 64, kernel_size=1, bias=False),
             nn.GroupNorm(8, 64),
             nn.GELU()
         )
+        self.skip1_proj = nn.Sequential(
+            nn.Conv3d(96, 32, kernel_size=1, bias=False),
+            nn.GroupNorm(8, 32),
+            nn.GELU()
+        )
         
-        # Layer 2 handles Layer 1 output (64 ch) + Compressed Level 2 skips (128 ch) -> Total 192 ch
+        # Layer 2 handles Layer 1 output (64 ch) + Compressed Level 3 skips (128 ch) -> Total 192 ch
         # 16x16x16 -> 32x32x32
         self.layer2 = DecoderBlock3D(in_channels=64 + 128, out_channels=32)        
         
-        # Layer 3 handles Layer 2 output (32 ch) + Compressed Level 1 skips (64 ch) -> Total 96 ch
+        # Layer 3 handles Layer 2 output (32 ch) + Compressed Level 2 skips (64 ch) -> Total 96 ch
         # 32x32x32 -> 64x64x64
         self.layer3 = DecoderBlock3D(in_channels=32 + 64, out_channels=16)        
+        
+        # Layer 4 handles Layer 3 output (16 ch) + Compressed Level 1 skips (32 ch) -> Total 48 ch
+        # 64x64x64 -> 64x64x64 (Mixing Block, no upsampling)
+        self.layer4 = nn.Sequential(
+            nn.Conv3d(16 + 32, 16, kernel_size=3, padding=1, bias=False),
+            nn.GroupNorm(8, 16),
+            nn.GELU()
+        )
         
         # Final Segmentation Head mapping to 4 target structural target regions
         self.seg_head = nn.Conv3d(16, out_channels, kernel_size=1)
@@ -78,9 +91,10 @@ class SegmentationDecoder3D(nn.Module):
             latent_tokens (Tensor): Shared Unified Latent Representation from the backbone.
                                     Shape: (B, L, embed_dim) where L = H_p * W_p * D_p (512)
             spatial_shape (tuple): Target grid shape (H_p, W_p, D_p) matching token shape (8, 8, 8)
-            skip_features (list of 2 Tensors): Multi-scale spatial feature maps from the encoder stems.
-                                               skip_features[0]: shape (B, 192, 32, 32, 32)
-                                               skip_features[1]: shape (B, 384, 16, 16, 16)
+            skip_features (list of 3 Tensors): Multi-scale spatial feature maps from the encoder stems.
+                                               skip_features[0]: shape (B, 96, 64, 64, 64)
+                                               skip_features[1]: shape (B, 192, 32, 32, 32)
+                                               skip_features[2]: shape (B, 384, 16, 16, 16)
         Returns:
             logits (Tensor): 3D segmentation logits of shape (B, 4, 64, 64, 64)
         """
@@ -96,19 +110,26 @@ class SegmentationDecoder3D(nn.Module):
         # Phase 4.2: Progressive volumetric reconstruction path with skip connections
         out = self.layer1(refined_features) # (B, 64, 16, 16, 16)
         
-        # Project and compress Level 2 multi-scale spatial maps to mitigate modality dropout scale variance
-        skip2 = self.skip2_proj(skip_features[1]) # (B, 128, 16, 16, 16)
+        # Project and compress Level 3 multi-scale spatial maps to mitigate modality dropout scale variance
+        skip3 = self.skip3_proj(skip_features[2]) # (B, 128, 16, 16, 16)
         
-        # Concatenate with Level 2 multi-scale spatial maps along the channels axis
-        out = torch.cat([out, skip2], dim=1) # (B, 64 + 128, 16, 16, 16)
+        # Concatenate with Level 3 multi-scale spatial maps along the channels axis
+        out = torch.cat([out, skip3], dim=1) # (B, 64 + 128, 16, 16, 16)
         out = self.layer2(out)             # (B, 32, 32, 32, 32)
         
-        # Project and compress Level 1 multi-scale spatial maps to mitigate modality dropout scale variance
-        skip1 = self.skip1_proj(skip_features[0]) # (B, 64, 32, 32, 32)
+        # Project and compress Level 2 multi-scale spatial maps to mitigate modality dropout scale variance
+        skip2 = self.skip2_proj(skip_features[1]) # (B, 64, 32, 32, 32)
+        
+        # Concatenate with Level 2 multi-scale spatial maps along the channels axis
+        out = torch.cat([out, skip2], dim=1) # (B, 32 + 64, 32, 32, 32)
+        out = self.layer3(out)             # (B, 16, 64, 64, 64)
+        
+        # Project and compress Level 1 multi-scale spatial maps (High-res edges)
+        skip1 = self.skip1_proj(skip_features[0]) # (B, 32, 64, 64, 64)
         
         # Concatenate with Level 1 multi-scale spatial maps along the channels axis
-        out = torch.cat([out, skip1], dim=1) # (B, 32 + 64, 32, 32, 32)
-        out = self.layer3(out)             # (B, 16, 64, 64, 64)
+        out = torch.cat([out, skip1], dim=1) # (B, 16 + 32, 64, 64, 64)
+        out = self.layer4(out)             # (B, 16, 64, 64, 64)
         
         logits = self.seg_head(out)        # (B, 4, 64, 64, 64)
         
@@ -130,11 +151,19 @@ class AuxiliaryDecoder3D(nn.Module):
         # 4.3.2 Hierarchical Upsampling Blocks: Reconstructs 8x8x8 -> 64x64x64
         self.layer1 = DecoderBlock3D(in_channels=embed_dim, out_channels=64)  
         
-        # Layer 2 handles Layer 1 output (64 ch) + Raw Level 2 single-modal skips (96 ch) -> Total 160 ch
+        # Layer 2 handles Layer 1 output (64 ch) + Raw Level 3 single-modal skips (96 ch) -> Total 160 ch
         self.layer2 = DecoderBlock3D(in_channels=64 + 96, out_channels=32)        
         
-        # Layer 3 handles Layer 2 output (32 ch) + Raw Level 1 single-modal skips (48 ch) -> Total 80 ch
+        # Layer 3 handles Layer 2 output (32 ch) + Raw Level 2 single-modal skips (48 ch) -> Total 80 ch
         self.layer3 = DecoderBlock3D(in_channels=32 + 48, out_channels=16)        
+        
+        # Layer 4 handles Layer 3 output (16 ch) + Raw Level 1 single-modal skips (24 ch) -> Total 40 ch
+        # Mixing Block (Stride-1, no upsampling)
+        self.layer4 = nn.Sequential(
+            nn.Conv3d(16 + 24, 16, kernel_size=3, padding=1, bias=False),
+            nn.GroupNorm(8, 16),
+            nn.GELU()
+        )
         
         # Final Segmentation Head mapping to 4 target structural target regions
         self.seg_head = nn.Conv3d(16, out_channels, kernel_size=1)
@@ -145,9 +174,10 @@ class AuxiliaryDecoder3D(nn.Module):
             latent_tokens (Tensor): Single modality latent representation.
                                     Shape: (B, L, embed_dim)
             spatial_shape (tuple): Target grid shape (H_p, W_p, D_p) matching token shape (8, 8, 8)
-            skip_features (list of 2 Tensors): Multi-scale spatial feature maps from ONE encoder stem.
-                                               skip_features[0]: shape (B, 48, 32, 32, 32)
-                                               skip_features[1]: shape (B, 96, 16, 16, 16)
+            skip_features (list of 3 Tensors): Multi-scale spatial feature maps from ONE encoder stem.
+                                               skip_features[0]: shape (B, 24, 64, 64, 64)
+                                               skip_features[1]: shape (B, 48, 32, 32, 32)
+                                               skip_features[2]: shape (B, 96, 16, 16, 16)
         Returns:
             logits (Tensor): 3D segmentation logits of shape (B, 4, 64, 64, 64)
         """
@@ -163,13 +193,17 @@ class AuxiliaryDecoder3D(nn.Module):
         # Phase 4.3.2: Progressive volumetric reconstruction path with skip connections
         out = self.layer1(refined_features) 
         
+        # Direct concatenation of single-modality Level 3 skips (no projection)
+        out = torch.cat([out, skip_features[2]], dim=1) 
+        out = self.layer2(out)             
+        
         # Direct concatenation of single-modality Level 2 skips (no projection)
         out = torch.cat([out, skip_features[1]], dim=1) 
-        out = self.layer2(out)             
+        out = self.layer3(out)             
         
         # Direct concatenation of single-modality Level 1 skips (no projection)
         out = torch.cat([out, skip_features[0]], dim=1) 
-        out = self.layer3(out)             
+        out = self.layer4(out)             
         
         logits = self.seg_head(out)        
         
