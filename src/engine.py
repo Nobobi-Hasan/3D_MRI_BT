@@ -1,6 +1,7 @@
 # src/engine.py
 
 import os
+import csv
 import torch
 import torch.nn.functional as F
 from torch.amp import autocast, GradScaler
@@ -142,7 +143,7 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
                     roi_size=config.PATCH_SIZE,
                     sw_batch_size=1,
                     predictor=evaluation_predictor,
-                    overlap=0.25,
+                    overlap=0.5,
                     mode="gaussian"
                 )
             
@@ -173,6 +174,12 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
     latest_path = os.path.join(config.CHECKPOINT_DIR, "latest_checkpoint.pth")
     best_seg_path = os.path.join(config.CHECKPOINT_DIR, "best_seg.pth")
 
+    # --- Setup CSV Logging Directory and File ---
+    results_dir = os.path.join(config.DRIVE_PROJECT_ROOT, "results")
+    os.makedirs(results_dir, exist_ok=True)
+    csv_file = os.path.join(results_dir, "training_metrics.csv")
+    # ------------------------------------------
+
     start_epoch = 0
     best_mean_dice = 0.0
 
@@ -199,6 +206,17 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
     else:
         print("[*] No prior checkpoint found. Initializing a new training.")
 
+    # --- Initialize CSV Header if starting fresh ---
+    if start_epoch == 0:
+        if os.path.exists(csv_file):
+            os.remove(csv_file)
+            
+    if start_epoch == 0 or not os.path.exists(csv_file):
+        with open(csv_file, mode='w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Epoch Number", "[Train] Seg Loss", "Mean Dice", "WT Dice", "TC Dice", "ET Dice", "Best"])
+    # -----------------------------------------------
+
     target_epoch = start_epoch + config.NUM_EPOCHS
     print(f"[*] Incremental Run Configuration: Training from Epoch {start_epoch} -> Target Epoch {target_epoch} (+{config.NUM_EPOCHS} epochs)")
 
@@ -221,6 +239,9 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
 
         if scheduler:
             scheduler.step()
+
+        # Check if the current epoch is the best one for CSV logging
+        is_best = "YES" if mean_dice > best_mean_dice else "NO"
 
         # Update historical threshold metrics safely
         current_best_mean_dice = max(mean_dice, best_mean_dice)
@@ -251,5 +272,19 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
             best_mean_dice = mean_dice
             torch.save(checkpoint_state, best_seg_path)
             print(f"*** best segmentation framework model configuration stored at: {best_seg_path}")
+
+        # --- Append metrics to CSV ---
+        with open(csv_file, mode='a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                epoch + 1, 
+                f"{train_seg_loss:.4f}", 
+                f"{mean_dice:.4f}", 
+                f"{val_metrics['dice_WT']:.4f}", 
+                f"{val_metrics['dice_TC']:.4f}", 
+                f"{val_metrics['dice_ET']:.4f}", 
+                is_best
+            ])
+        # -----------------------------
 
     print(f"\n Incremental cycle finished successfully. Total absolute epochs processed: {target_epoch}")
