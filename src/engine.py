@@ -53,11 +53,12 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
             
             # Clone skip features to apply skip connection masking without mutating the original tensors 
             # (since original unmasked features are strictly required for the aux pathway)
-            processed_skip_features = [skip_features[0].clone(), skip_features[1].clone()]
+            processed_skip_features = [skip_features[0].clone(), skip_features[1].clone(), skip_features[2].clone()]
             
             # Calculate channel chunks per modality dynamically
             skip1_chunk = processed_skip_features[0].size(1) // num_mods
             skip2_chunk = processed_skip_features[1].size(1) // num_mods
+            skip3_chunk = processed_skip_features[2].size(1) // num_mods
 
             for i in range(num_mods):
                 if keep_mask[i] == 1.0:
@@ -72,6 +73,7 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
                     # This prevents data leakage where missing modality features bypass the fusion module via the skip connection
                     processed_skip_features[0][:, i * skip1_chunk : (i + 1) * skip1_chunk, :, :, :] = 0.0
                     processed_skip_features[1][:, i * skip2_chunk : (i + 1) * skip2_chunk, :, :, :] = 0.0
+                    processed_skip_features[2][:, i * skip3_chunk : (i + 1) * skip3_chunk, :, :, :] = 0.0
             # -----------------------------------------------------------------------
 
             # 2. Main Pathway (Pathway B): Process fused masked features
@@ -84,7 +86,7 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
             # 3. Auxiliary Pathway (Pathway A): Independent supervision on unmasked modalities
             aux_preds = []
             for idx in active_modalities:
-                mod_skips = [single_skip_features[0][idx], single_skip_features[1][idx]]
+                mod_skips = [single_skip_features[0][idx], single_skip_features[1][idx], single_skip_features[2][idx]]
                 aux_pred = aux_decoder(modality_tokens[idx], spatial_shape, mod_skips)
                 aux_preds.append(aux_pred)
 
@@ -141,7 +143,7 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
                 seg_logits = sliding_window_inference(
                     inputs=single_img,
                     roi_size=config.PATCH_SIZE,
-                    sw_batch_size=1,
+                    sw_batch_size=4,
                     predictor=evaluation_predictor,
                     overlap=0.5,
                     mode="gaussian"

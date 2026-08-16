@@ -13,7 +13,7 @@ class SegmentationLoss(nn.Module):
         self.register_buffer('class_weights', torch.tensor([0.1, 1.5, 1.0, 2.0]), persistent=False)
         
         # MONAI DiceCE Loss combines Dice and Cross Entropy for better stability
-        self.dice_ce_loss = DiceCELoss(to_onehot_y=True, softmax=True, ce_weight=self.class_weights)
+        self.dice_ce_loss = DiceCELoss(to_onehot_y=True, softmax=True, weight=self.class_weights)
         
         # Weight for the shared-weight auxiliary decoder supervision
         self.aux_weight = getattr(config, 'AUX_LOSS_WEIGHT', aux_weight)
