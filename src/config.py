@@ -29,6 +29,8 @@ CHECKPOINT_DIR = os.path.join(DRIVE_PROJECT_ROOT, "checkpoints")
 LATEST_CHECKPOINT = os.path.join(CHECKPOINT_DIR, "latest_model.pth")
 BEST_CHECKPOINT = os.path.join(CHECKPOINT_DIR, "best_model.pth")
 
+RESULT_DIR = os.path.join(DRIVE_PROJECT_ROOT, "results")
+
 
 # =========================================================================
 # 2. Data Splitting & Stratification Configuration
