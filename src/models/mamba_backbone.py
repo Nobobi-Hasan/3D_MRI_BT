@@ -70,19 +70,37 @@ class OverlappingPatchEmbed3D(nn.Module):
 
 class BiMambaInnerLayer3D(nn.Module):
     """A highly optimized, hardware-friendly 3D Bidirectional Mamba SSM block."""
-    def __init__(self, d_model, d_state=16, d_conv=3, expand=2):
+    def __init__(self, d_model=96, d_state=16, d_conv=3, expand=2):
         super().__init__()
-        # Natively handles the bidirectional scan at the C++/CUDA level
-        self.mamba = Mamba(
+        # The official mamba-ssm package from PyPI only does forward causal scans natively.
+        # To recreate the Vision Mamba (Vim) "v2" bidirectional behavior, we use two separate 
+        # hardware-fused blocks (one for the forward pass, one for the backward pass).
+        
+        self.mamba_fwd = Mamba(
             d_model=d_model,
             d_state=d_state,
             d_conv=d_conv,
             expand=expand,
-            bimamba_type="v2",
+        )
+        
+        self.mamba_bwd = Mamba(
+            d_model=d_model,
+            d_state=d_state,
+            d_conv=d_conv,
+            expand=expand,
         )
 
     def forward(self, x):
-        return self.mamba(x)
+        # Forward sequence scan (Hardware fused)
+        out_fwd = self.mamba_fwd(x)
+        
+        # Backward sequence scan (Flip sequence length dimension L -> B, L, C)
+        x_flipped = torch.flip(x, dims=[1])
+        out_bwd = self.mamba_bwd(x_flipped)
+        out_bwd = torch.flip(out_bwd, dims=[1])
+        
+        # Fuse the bidirectional features
+        return out_fwd + out_bwd
 
 class BiMambaEncoder3D(nn.Module):
     """Residual wrapper block grouping sequential bidirectional Mamba layers."""
