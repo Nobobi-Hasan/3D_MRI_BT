@@ -2,6 +2,7 @@
 
 import os
 import csv
+import gc  # Added for garbage collection
 import torch
 import torch.nn.functional as F
 from torch.amp import autocast, GradScaler
@@ -143,7 +144,7 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
                 seg_logits = sliding_window_inference(
                     inputs=single_img,
                     roi_size=config.PATCH_SIZE,
-                    sw_batch_size=16,
+                    sw_batch_size=4,  # Changed from 16 to 4 to prevent GPU memory explosion
                     predictor=evaluation_predictor,
                     overlap=0.5,
                     mode="gaussian"
@@ -166,6 +167,12 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
     metrics = seg_tracker.compute(run_hd=False)
 
     metrics["val_loss"] = running_loss / len(dataloader)
+    
+    # Clear the tracker and force Python Garbage Collection to prevent System RAM leaks
+    if hasattr(seg_tracker, 'reset'):
+        seg_tracker.reset()
+    del seg_tracker
+    gc.collect()
 
     return metrics
 
@@ -288,5 +295,8 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
                 is_best
             ])
         # -----------------------------
+        
+        # Clear GPU memory fragmentation safely at the end of each complete epoch cycle
+        torch.cuda.empty_cache()
 
     print(f"\n Incremental cycle finished successfully. Total absolute epochs processed: {target_epoch}")
