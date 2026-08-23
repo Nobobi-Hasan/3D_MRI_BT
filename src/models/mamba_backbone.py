@@ -10,22 +10,22 @@ class SingleModalityConvStem3D(nn.Module):
     """
     def __init__(self, out_channels=96):
         super().__init__()
-        # Layer 1: 64x64x64 -> 64x64x64 (New Stride-1 block for high-res edge details)
+        # Layer 1: 64x64x64 -> 64x64x64
         self.layer1 = nn.Sequential(
             nn.Conv3d(1, out_channels // 4, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.GroupNorm(8, out_channels // 4),
+            nn.InstanceNorm3d(out_channels // 4),
             nn.GELU()
         )
-        # Layer 2: 64x64x64 -> 32x32x32 (Former Layer 1)
+        # Layer 2: 64x64x64 -> 32x32x32
         self.layer2 = nn.Sequential(
             nn.Conv3d(out_channels // 4, out_channels // 2, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.GroupNorm(8, out_channels // 2),
+            nn.InstanceNorm3d(out_channels // 2),
             nn.GELU()
         )
-        # Layer 3: 32x32x32 -> 16x16x16 (Former Layer 2)
+        # Layer 3: 32x32x32 -> 16x16x16
         self.layer3 = nn.Sequential(
             nn.Conv3d(out_channels // 2, out_channels, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.GroupNorm(8, out_channels),
+            nn.InstanceNorm3d(out_channels),
             nn.GELU()
         )
 
