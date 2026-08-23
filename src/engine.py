@@ -144,7 +144,7 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
                 seg_logits = sliding_window_inference(
                     inputs=single_img,
                     roi_size=config.PATCH_SIZE,
-                    sw_batch_size=4,  # Changed from 16 to 4 to prevent GPU memory explosion
+                    sw_batch_size=16,
                     predictor=evaluation_predictor,
                     overlap=0.5,
                     mode="gaussian"
