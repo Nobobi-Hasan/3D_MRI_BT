@@ -34,21 +34,25 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
             # 1. Forward pass through backbone to get standard and single-modality features
             modality_tokens, spatial_shape, skip_features, single_skip_features = backbone(images)
             
-            # --- Phase 5: Pseudo-Curriculum Warmup & Token-Level Modality Dropout ---
-            # No dropout during the warmup phase to establish stable initial representations
-            current_dropout_rate = 0.0 if epoch < config.WARMUP_EPOCHS else config.MODALITY_DROPOUT_PROB
-            
+            # --- Phase 5: Random Modality Dropout (15 Valid Combinations) ---
             num_mods = len(modality_tokens)
             active_modalities = []
             processed_modality_tokens = []
             
-            # Create a per-batch mask for modality dropping
+            # Explicit list of all 15 valid combinations of DROPPED modalities
+            possible_drops = [
+                [], [0], [1], [2], [3],
+                [0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3],
+                [0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]
+            ]
+            
+            # Randomly select one combination of modalities to drop
+            drop_combo = possible_drops[torch.randint(0, 15, (1,)).item()]
+            
+            # Initialize keep_mask with all 1s, then set the dropped indices to 0
             keep_mask = torch.ones(num_mods, device=device)
-            if current_dropout_rate > 0.0:
-                keep_mask = (torch.rand(num_mods, device=device) > current_dropout_rate).float()
-                # Fallback: if all modalities drop, randomly keep one to prevent zero-gradient failure
-                if keep_mask.sum() == 0:
-                    keep_mask[torch.randint(0, num_mods, (1,)).item()] = 1.0
+            for d in drop_combo:
+                keep_mask[d] = 0.0
             
             processed_images = images.clone()
             
