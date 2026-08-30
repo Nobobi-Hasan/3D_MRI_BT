@@ -29,6 +29,15 @@ CHECKPOINT_DIR = os.path.join(DRIVE_PROJECT_ROOT, "checkpoints")
 LATEST_CHECKPOINT = os.path.join(CHECKPOINT_DIR, "latest_model.pth")
 BEST_CHECKPOINT = os.path.join(CHECKPOINT_DIR, "best_model.pth")
 
+# Expert pre-training checkpoints directory and paths
+EXPERT_CHECKPOINT_DIR = os.path.join(CHECKPOINT_DIR, "experts")
+PRETRAINED_EXPERT_PATHS = {
+    "t1": os.path.join(EXPERT_CHECKPOINT_DIR, "best_expert_t1.pth"),
+    "t1ce": os.path.join(EXPERT_CHECKPOINT_DIR, "best_expert_t1ce.pth"),
+    "t2": os.path.join(EXPERT_CHECKPOINT_DIR, "best_expert_t2.pth"),
+    "flair": os.path.join(EXPERT_CHECKPOINT_DIR, "best_expert_flair.pth"),
+}
+
 RESULT_DIR = os.path.join(DRIVE_PROJECT_ROOT, "results")
 
 
@@ -36,7 +45,7 @@ RESULT_DIR = os.path.join(DRIVE_PROJECT_ROOT, "results")
 # 2. Data Splitting & Stratification Configuration
 # =========================================================================
 # Fixed seed for exact reproducibility across sessions
-RANDOM_SEED = 42
+RANDOM_SEED = 73
 
 # 80/10/10 data split ratios
 # TRAIN_RATIO = 0.80
@@ -67,34 +76,29 @@ EMBED_DIM = 96
 # Batch size per step
 BATCH_SIZE = 4
 
-# Total targeted training epochs across each session
-NUM_EPOCHS = 30
-# Total targeted training epochs across all sessions
+# Stage 1: Expert Pre-Training Settings
+PRETRAIN_EPOCHS = 300
+PRETRAIN_LR = 1e-3
+
+# Stage 2: Joint Training Settings
 TOTAL_EPOCHS = 300
-
-# Base optimizer learning parameters
-# LEARNING_RATE = 1e-4
-# WEIGHT_DECAY = 1e-5
-
-LEARNING_RATE = 2e-4
+BASE_LR = 1e-3
+ENCODER_LR = 1e-4  # Lower LR for fine-tuning pre-trained encoders
 WEIGHT_DECAY = 1e-5
 
 # Lowest learning rate boundary for the scheduler decay cycle
 # ETA_MIN = 1e-6 # required only for CosineAnnealingWarmRestarts scheduler
 
 # Safe RAM cache threshold for MONAI CacheDataset on Free Colab
-CACHE_RATE = 0.0  # was 0.3 earlier (session crached due to RAM overload)
+CACHE_RATE = 0.0  # was 0.3 earlier (session crashed due to RAM overload)
 NUM_WORKERS = 2
 
 
 # =========================================================================
 # 5. Advanced Component Parameters
 # =========================================================================
-# Maximum boundary probability for simulating missing input sequence drops
-MODALITY_DROPOUT_PROB = 0.2
-
-# Epoch threshold to activate modality dropout (Pseudo-Curriculum Warmup)
-WARMUP_EPOCHS = 20
+# Epoch threshold to unfreeze encoders (Phase 1 Frozen Warm-up)
+FROZEN_WARMUP_EPOCHS = 30
 
 # Weight multiplier for the shared-weight auxiliary decoder loss
 AUX_LOSS_WEIGHT = 0.4
