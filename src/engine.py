@@ -236,6 +236,14 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
     for epoch in range(start_epoch, target_epoch):
         print(f"\n--- Epoch {epoch + 1}/{target_epoch} ---")
         
+        # Phase 1 & 2: Frozen Warm-Up and Differential Fine-Tuning
+        if epoch < config.FROZEN_WARMUP_EPOCHS:
+            for param in model_components[0].parameters():  # model_components[0] is backbone
+                param.requires_grad = False
+        else:
+            for param in model_components[0].parameters():
+                param.requires_grad = True
+        
         # Pass the current epoch integer to control the warmup/dropout logic
         train_seg_loss = train_one_epoch(
             model_components, train_loader, criterion, optimizer, scaler, device, epoch

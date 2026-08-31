@@ -142,6 +142,32 @@ class MambaBackbone(nn.Module):
             BiMambaEncoder3D(d_model=embed_dim, depth=mamba_depth) for _ in range(num_modalities)
         ])
 
+    def load_expert_weights(self, expert_paths, device="cuda"):
+        """Loads isolated pre-trained expert weights into the modality-specific branches."""
+        import os
+        import torch
+        
+        print("[*] Loading isolated pre-trained expert weights into MambaBackbone...")
+        modality_keys = ["t1", "t1ce", "t2", "flair"]
+
+        for idx, mod in enumerate(modality_keys):
+            expert_path = expert_paths[mod]
+            
+            if os.path.exists(expert_path):
+                checkpoint = torch.load(expert_path, map_location=device)
+                
+                # Verify the checkpoint contains the explicitly named dictionaries
+                if "stem_state" in checkpoint:
+                    self.stems[idx].load_state_dict(checkpoint["stem_state"])
+                    self.patch_embeds[idx].load_state_dict(checkpoint["patch_embed_state"])
+                    self.modality_encoders[idx].load_state_dict(checkpoint["encoder_state"])
+                    
+                    print(f"  [+] Successfully loaded {mod.upper()} expert from: {expert_path}")
+                else:
+                    print(f"  [!] ERROR: Checkpoint format mismatch at {expert_path}. Could not load weights.")
+            else:
+                print(f"  [!] WARNING: {mod.upper()} expert not found at {expert_path}. Using random initialization.")
+
     def forward(self, x):
         B, num_mods, H, W, D = x.shape
         modality_tokens = []
