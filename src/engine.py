@@ -33,7 +33,7 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
         with autocast(device_type=device.type, enabled=(device.type == "cuda")):
             # 1. Forward pass through backbone to get standard and single-modality features
             modality_tokens, spatial_shape, skip_features, single_skip_features = backbone(images)
-            
+        
             # --- Phase 5: Random Modality Dropout (15 Valid Combinations) ---
             num_mods = len(modality_tokens)
             active_modalities = []

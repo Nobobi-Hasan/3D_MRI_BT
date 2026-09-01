@@ -13,12 +13,12 @@ from src.metrics import SegmentationMetrics
 
 def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, device, target_modality_idx):
     """Trains the 4 isolated single-modality architectural components for one epoch."""
-    stem, patch_embed, encoder, decoder = model_components
+    conv_stem, patch_embed, mamba_backbone, aux_decoder = model_components
     
-    stem.train()
+    conv_stem.train()
     patch_embed.train()
-    encoder.train()
-    decoder.train()
+    mamba_backbone.train()
+    aux_decoder.train()
 
     running_loss = 0.0
     running_seg_loss = 0.0
@@ -34,17 +34,17 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
 
         with autocast(device_type=device.type, enabled=(device.type == "cuda")):
             # 1. Forward pass through unimodal feature stem
-            feat1, feat2, feat3 = stem(mod_channel)
+            feat1, feat2, feat3 = conv_stem(mod_channel)
             
             # 2. Tokenize the lowest resolution spatial map
             tokens, spatial_shape = patch_embed(feat3)
             
             # 3. Process tokens through BiMamba sequential blocks
-            encoded_tokens = encoder(tokens)
+            encoded_tokens = mamba_backbone(tokens)
             
             # 4. Decode representations back into 3D segmentation map using skip connections
             skip_features = [feat1, feat2, feat3]
-            seg_logits = decoder(encoded_tokens, spatial_shape, skip_features)
+            seg_logits = aux_decoder(encoded_tokens, spatial_shape, skip_features)
             
             # 5. Calculate Loss (DiceCE)
             # Pass None for aux_preds since this is a single isolated pathway
@@ -63,12 +63,12 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
 @torch.no_grad()
 def validate_one_epoch(model_components, dataloader, criterion, device, target_modality_idx):
     """Evaluates the isolated expert pipeline on validation subsets with ground-truth masks."""
-    stem, patch_embed, encoder, decoder = model_components
+    conv_stem, patch_embed, mamba_backbone, aux_decoder = model_components
     
-    stem.eval()
+    conv_stem.eval()
     patch_embed.eval()
-    encoder.eval()
-    decoder.eval()
+    mamba_backbone.eval()
+    aux_decoder.eval()
 
     running_loss = 0.0
     seg_tracker = SegmentationMetrics()
@@ -87,11 +87,11 @@ def validate_one_epoch(model_components, dataloader, criterion, device, target_m
 
             def evaluation_predictor(patch_images):
                 # Sequential forward pass for sliding window patches
-                feat1, feat2, feat3 = stem(patch_images)
+                feat1, feat2, feat3 = conv_stem(patch_images)
                 tokens, spatial_shape = patch_embed(feat3)
-                encoded_tokens = encoder(tokens)
+                encoded_tokens = mamba_backbone(tokens)
                 skip_features = [feat1, feat2, feat3]
-                seg_logits = decoder(encoded_tokens, spatial_shape, skip_features)
+                seg_logits = aux_decoder(encoded_tokens, spatial_shape, skip_features)
 
                 return seg_logits
 
@@ -153,10 +153,10 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
         print(f"[*] Found existing checkpoint record at: {latest_path}. Loading state...")
         checkpoint = torch.load(latest_path, map_location=device)
         
-        model_components[0].load_state_dict(checkpoint["stem_state"])
+        model_components[0].load_state_dict(checkpoint["conv_stem_state"])
         model_components[1].load_state_dict(checkpoint["patch_embed_state"])
-        model_components[2].load_state_dict(checkpoint["encoder_state"])
-        model_components[3].load_state_dict(checkpoint["decoder_state"])
+        model_components[2].load_state_dict(checkpoint["mamba_backbone_state"])
+        model_components[3].load_state_dict(checkpoint["aux_decoder_state"])
         
         optimizer.load_state_dict(checkpoint["optimizer_state"])
         
@@ -214,10 +214,10 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
         # Dictionary explicitly mapped for the joint training MambaBackbone loader function
         checkpoint_state = {
             "epoch": epoch + 1,
-            "stem_state": model_components[0].state_dict(),
+            "conv_stem_state": model_components[0].state_dict(),
             "patch_embed_state": model_components[1].state_dict(),
-            "encoder_state": model_components[2].state_dict(),
-            "decoder_state": model_components[3].state_dict(),
+            "mamba_backbone_state": model_components[2].state_dict(),
+            "aux_decoder_state": model_components[3].state_dict(),
             "optimizer_state": optimizer.state_dict(),
             "scheduler_state": scheduler.state_dict() if scheduler else None,
             "scaler_state": scaler.state_dict(),
