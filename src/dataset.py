@@ -41,7 +41,7 @@ def get_brats_dataloaders(batch_size=config.BATCH_SIZE):
     
     # Wrap in MONAI data loaders
     train_loader = create_dataloader(train_ds, batch_size=batch_size, shuffle=True)
-    val_loader = create_dataloader(val_ds, batch_size=batch_size, shuffle=False)
+    val_loader = create_dataloader(val_ds, batch_size=1, shuffle=False)
     
     return train_loader, val_loader
     

@@ -141,9 +141,9 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
     best_seg_path = save_path
 
     # --- Setup CSV Logging Directory and File ---
-    results_dir = os.path.join(config.DRIVE_PROJECT_ROOT, "results")
-    os.makedirs(results_dir, exist_ok=True)
-    csv_file = os.path.join(results_dir, f"training_metrics_expert_{modality_name}.csv")
+    expert_results_dir = os.path.join(config.DRIVE_PROJECT_ROOT, "results/experts")
+    os.makedirs(expert_results_dir, exist_ok=True)
+    csv_file = os.path.join(expert_results_dir, f"training_metrics_expert_{modality_name}.csv")
     # ------------------------------------------
 
     start_epoch = 0
@@ -182,8 +182,8 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
             writer.writerow(["Epoch Number", "[Train] Seg Loss", "Mean Dice", "WT Dice", "TC Dice", "ET Dice", "Best"])
     # -----------------------------------------------
 
-    target_epoch = start_epoch + config.PRETRAIN_EPOCHS
-    print(f"[*] Incremental Run Configuration: Training from Epoch {start_epoch} -> Target Epoch {target_epoch} (+{config.PRETRAIN_EPOCHS} epochs)")
+    target_epoch = start_epoch + config.NUM_EPOCHS
+    print(f"[*] Incremental Run Configuration: Training from Epoch {start_epoch} -> Target Epoch {target_epoch} (+{config.NUM_EPOCHS} epochs)")
 
     for epoch in range(start_epoch, target_epoch):
         print(f"\n--- Epoch {epoch + 1}/{target_epoch} ---")
