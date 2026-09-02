@@ -24,7 +24,7 @@ def create_dataloader(dataset, batch_size, shuffle=False):
         pin_memory=True   # pinned memory for rapid GPU transfer
     )
 
-def get_brats_dataloaders():
+def get_brats_dataloaders(batch_size=config.BATCH_SIZE):
     """Assembles and returns the final train and validation dataloaders."""
     # Load patient record dictionary splits
     splits = load_split_records(config.DATA_SPLIT_JSON)
@@ -40,12 +40,12 @@ def get_brats_dataloaders():
     val_ds = create_brats_dataset(val_records, val_transforms, use_cache=False)
     
     # Wrap in MONAI data loaders
-    train_loader = create_dataloader(train_ds, batch_size=config.BATCH_SIZE, shuffle=True)
-    val_loader = create_dataloader(val_ds, batch_size=config.BATCH_SIZE, shuffle=False)
+    train_loader = create_dataloader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader = create_dataloader(val_ds, batch_size=batch_size, shuffle=False)
     
     return train_loader, val_loader
     
-def get_test_dataloader():
+def get_test_dataloader(batch_size=config.BATCH_SIZE):
     """Assembles and returns the final test dataloader."""
     # Load patient record dictionary splits
     splits = load_split_records(config.DATA_SPLIT_JSON)
@@ -58,6 +58,6 @@ def get_test_dataloader():
     test_ds = create_brats_dataset(test_records, test_transforms, use_cache=False)
     
     # Wrap in MONAI data loader
-    test_loader = create_dataloader(test_ds, batch_size=config.BATCH_SIZE, shuffle=False)
+    test_loader = create_dataloader(test_ds, batch_size=batch_size, shuffle=False)
     
     return test_loader
