@@ -77,7 +77,7 @@ EMBED_DIM = 96
 BATCH_SIZE = 4
 
 # Total targeted training epochs across each session
-NUM_EPOCHS = 50
+NUM_EPOCHS = 90
 
 # Stage 1: Expert Pre-Training Settings
 PRETRAIN_EPOCHS = 300

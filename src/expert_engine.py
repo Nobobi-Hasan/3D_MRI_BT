@@ -132,7 +132,7 @@ def validate_one_epoch(model_components, dataloader, criterion, device, target_m
     return metrics
 
 
-def run_training(model_components, train_loader, val_loader, criterion, optimizer, scheduler, scaler, device, target_modality_idx, save_path):
+def run_training(model_components, train_loader, val_loader, criterion, optimizer, scheduler, scaler, device, target_modality_idx, save_path, session_epoch = config.NUM_EPOCHS):
     
     os.makedirs(config.EXPERT_CHECKPOINT_DIR, exist_ok=True)
     modality_name = config.MODALITIES[target_modality_idx]
@@ -182,8 +182,8 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
             writer.writerow(["Epoch Number", "[Train] Seg Loss", "Mean Dice", "WT Dice", "TC Dice", "ET Dice", "Best"])
     # -----------------------------------------------
 
-    target_epoch = start_epoch + config.NUM_EPOCHS
-    print(f"[*] Incremental Run Configuration: Training from Epoch {start_epoch} -> Target Epoch {target_epoch} (+{config.NUM_EPOCHS} epochs)")
+    target_epoch = start_epoch + session_epoch
+    print(f"[*] Incremental Run Configuration: Training from Epoch {start_epoch} -> Target Epoch {target_epoch} (+{session_epoch} epochs)")
 
     for epoch in range(start_epoch, target_epoch):
         print(f"\n--- Epoch {epoch + 1}/{target_epoch} ---")
