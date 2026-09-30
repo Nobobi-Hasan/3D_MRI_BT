@@ -84,7 +84,7 @@ PRETRAIN_EPOCHS = 300
 PRETRAIN_LR = 1e-3
 
 # Stage 2: Joint Training Settings
-TOTAL_EPOCHS = 300
+TOTAL_EPOCHS = 350
 BASE_LR = 1e-3
 ENCODER_LR = 1e-4  # Lower LR for fine-tuning pre-trained encoders
 WEIGHT_DECAY = 1e-5
@@ -105,3 +105,11 @@ FROZEN_WARMUP_EPOCHS = 30
 
 # Weight multiplier for the shared-weight auxiliary decoder loss
 AUX_LOSS_WEIGHT = 0.4
+
+# Modality dropout combinations for joint training and evaluation
+POSSIBLE_DROPPED_MODALITY_COMBINATIONS = [
+    [], [0], [1], [2], [3],
+    [0, 1], [0, 2], [0, 3],
+    [1, 2], [1, 3], [2, 3],
+    [0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]
+]

@@ -31,69 +31,31 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
         optimizer.zero_grad(set_to_none=True)
 
         with autocast(device_type=device.type, enabled=(device.type == "cuda")):
-            # 1. Forward pass through backbone to get standard and single-modality features
+            # 1. Forward pass through backbone
+            # Missing modalities (zeroed by RandDropModalityd) are automatically skipped inside MambaBackbone
             modality_tokens, spatial_shape, skip_features, single_skip_features = backbone(images)
-        
-            # --- Phase 5: Random Modality Dropout (15 Valid Combinations) ---
-            num_mods = len(modality_tokens)
-            active_modalities = []
-            processed_modality_tokens = []
             
-            # Explicit list of all 15 valid combinations of DROPPED modalities
-            possible_drops = [
-                [], [0], [1], [2], [3],
-                [0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3],
-                [0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]
-            ]
-            
-            # Randomly select one combination of modalities to drop
-            drop_combo = possible_drops[torch.randint(0, 15, (1,)).item()]
-            
-            # Initialize keep_mask with all 1s, then set the dropped indices to 0
-            keep_mask = torch.ones(num_mods, device=device)
-            for d in drop_combo:
-                keep_mask[d] = 0.0
-            
-            processed_images = images.clone()
-            
-            # Clone skip features to apply skip connection masking without mutating the original tensors 
-            # (since original unmasked features are strictly required for the aux pathway)
-            processed_skip_features = [skip_features[0].clone(), skip_features[1].clone(), skip_features[2].clone()]
-            
-            # Calculate channel chunks per modality dynamically
-            skip1_chunk = processed_skip_features[0].size(1) // num_mods
-            skip2_chunk = processed_skip_features[1].size(1) // num_mods
-            skip3_chunk = processed_skip_features[2].size(1) // num_mods
-
-            for i in range(num_mods):
-                if keep_mask[i] == 1.0:
-                    processed_modality_tokens.append(modality_tokens[i])
-                    active_modalities.append(i)
-                else:
-                    # Replace dropped modality tokens and original image channels with zeros
-                    processed_modality_tokens.append(torch.zeros_like(modality_tokens[i]))
-                    processed_images[:, i, :, :, :] = 0.0
-                    
-                    # Apply Skip Connection Masking: Zero out the corresponding channel chunks for dropped modalities
-                    # This prevents data leakage where missing modality features bypass the fusion module via the skip connection
-                    processed_skip_features[0][:, i * skip1_chunk : (i + 1) * skip1_chunk, :, :, :] = 0.0
-                    processed_skip_features[1][:, i * skip2_chunk : (i + 1) * skip2_chunk, :, :, :] = 0.0
-                    processed_skip_features[2][:, i * skip3_chunk : (i + 1) * skip3_chunk, :, :, :] = 0.0
-            # -----------------------------------------------------------------------
-
-            # 2. Main Pathway (Pathway B): Process fused masked features
-            fused_tokens = fusion(processed_modality_tokens, processed_images)
+            # 2. Main Pathway (Pathway B): Process fused features
+            # Fusion block detects missing channels dynamically from 'images' and injects absent_emb
+            fused_tokens = fusion(modality_tokens, images)
             latent_tokens = shared_backbone(fused_tokens)
             
-            # Feed the strictly masked skip features to the main decoder
-            seg_logits = decoder(latent_tokens, spatial_shape, processed_skip_features)
+            # Feed the skip features to the main decoder
+            seg_logits = decoder(latent_tokens, spatial_shape, skip_features)
             
-            # 3. Auxiliary Pathway (Pathway A): Independent supervision on unmasked modalities
+            # 3. Auxiliary Pathway (Pathway A): Independent supervision on strictly present modalities
             aux_preds = []
-            for idx in active_modalities:
-                mod_skips = [single_skip_features[0][idx], single_skip_features[1][idx], single_skip_features[2][idx]]
-                aux_pred = aux_decoder(modality_tokens[idx], spatial_shape, mod_skips)
-                aux_preds.append(aux_pred)
+            B_current, num_mods = images.shape[0], len(modality_tokens)
+            
+            # Dynamically detect missing modalities by checking if channels equal 0
+            presence = (images.reshape(B_current, num_mods, -1).abs().sum(dim=-1) > 1e-5)
+            
+            for idx in range(num_mods):
+                # ONLY compute auxiliary forward pass if the modality is present
+                if presence[:, idx].any():
+                    mod_skips = [single_skip_features[0][idx], single_skip_features[1][idx], single_skip_features[2][idx]]
+                    aux_pred = aux_decoder(modality_tokens[idx], spatial_shape, mod_skips)
+                    aux_preds.append(aux_pred)
 
             # 4. Calculate Combined Loss (DiceCE + Scaled Aux DiceCE)
             loss_seg = criterion(seg_logits, seg_targets, aux_preds)
@@ -110,7 +72,7 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
 
 @torch.no_grad()
 def validate_one_epoch(model_components, dataloader, criterion, device):
-    """Evaluates all 5 components on validation subsets with ground-truth masks."""
+    """Evaluates all 5 components on validation subsets across all 15 missing-modality combinations."""
     backbone, fusion, shared_backbone, decoder, aux_decoder = model_components
     
     backbone.eval()
@@ -122,55 +84,65 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
     running_loss = 0.0
     seg_tracker = SegmentationMetrics()
     
-    for batch in tqdm(dataloader, desc="Validation Batches", leave=False):
-        images = batch["image"].to(device)
+    combinations = config.POSSIBLE_DROPPED_MODALITY_COMBINATIONS
+    
+    for batch in tqdm(dataloader, desc="Validation Batches (15 Combinations)", leave=False):
+        images_original = batch["image"].to(device)
         seg_targets = batch["label"].to(device)
+        B_current = images_original.size(0)
 
-        B_current = images.size(0)
-        batch_seg_logits = []
-
-        # Iterate through batch elements individually to align localized sliding window metrics
-        for b in range(B_current):
-            single_img = images[b:b+1]  # Shape: (1, 4, 128, 128, 128)
-
-            def evaluation_predictor(patch_images):
-                # Unpack the updated 4 outputs from the backbone (ignore single_skip_features for validation)
-                modality_tokens, spatial_shape, skip_features, _ = backbone(patch_images)
-                # No dropout applied during validation phase
-                fused_tokens = fusion(modality_tokens, patch_images)
-                latent_tokens = shared_backbone(fused_tokens)
-                seg_logits = decoder(latent_tokens, spatial_shape, skip_features)
-
-                return seg_logits
-
-            with autocast(device_type=device.type, enabled=(device.type == "cuda")):
-                # Perform sliding window inference over a single validation volume to isolate feature scales
-                seg_logits = sliding_window_inference(
-                    inputs=single_img,
-                    roi_size=config.PATCH_SIZE,
-                    sw_batch_size=24,
-                    predictor=evaluation_predictor,
-                    overlap=0.5,
-                    mode="gaussian"
-                )
+        # Loop through all 15 missing modality scenarios for the current batch
+        for comb in combinations:
+            masked_images = images_original.clone()
             
-            batch_seg_logits.append(seg_logits)
+            # Apply deterministic zero-mask for the current missing-modality combination
+            for idx in comb:
+                masked_images[:, idx, ...] = 0.0
 
-        # Re-assemble the individual predictions back to match original batch shapes
-        seg_logits = torch.cat(batch_seg_logits, dim=0)  # Shape: (B, 4, 128, 128, 128)
-        
-        with autocast(device_type=device.type, enabled=(device.type == "cuda")):
-            # Pass None for aux_preds since we do not calculate auxiliary loss during validation
-            loss_seg = criterion(seg_logits, seg_targets, aux_preds=None)
+            batch_seg_logits = []
 
-        running_loss += loss_seg.item()
+            # Iterate through batch elements individually to align localized sliding window metrics
+            for b in range(B_current):
+                single_img = masked_images[b:b+1]  # Shape: (1, 4, 128, 128, 128)
 
-        seg_preds = torch.argmax(seg_logits, dim=1, keepdim=True)
-        seg_tracker.update(seg_preds, seg_targets, run_hd=False)
+                def evaluation_predictor(patch_images):
+                    # Unpack the updated 4 outputs from the backbone
+                    modality_tokens, spatial_shape, skip_features, _ = backbone(patch_images)
+                    fused_tokens = fusion(modality_tokens, patch_images)
+                    latent_tokens = shared_backbone(fused_tokens)
+                    seg_logits = decoder(latent_tokens, spatial_shape, skip_features)
+                    return seg_logits
+
+                with autocast(device_type=device.type, enabled=(device.type == "cuda")):
+                    # Perform sliding window inference over a single validation volume
+                    seg_logits = sliding_window_inference(
+                        inputs=single_img,
+                        roi_size=config.PATCH_SIZE,
+                        sw_batch_size=24,
+                        predictor=evaluation_predictor,
+                        overlap=0.5,
+                        mode="gaussian"
+                    )
+                
+                batch_seg_logits.append(seg_logits)
+
+            # Re-assemble the individual predictions back to match original batch shapes
+            seg_logits = torch.cat(batch_seg_logits, dim=0)  # Shape: (B, 4, 128, 128, 128)
+            
+            with autocast(device_type=device.type, enabled=(device.type == "cuda")):
+                # Pass None for aux_preds since we do not calculate auxiliary loss during validation
+                loss_seg = criterion(seg_logits, seg_targets, aux_preds=None)
+
+            running_loss += loss_seg.item()
+
+            seg_preds = torch.argmax(seg_logits, dim=1, keepdim=True)
+            # Accumulate metrics across all 15 combinations natively
+            seg_tracker.update(seg_preds, seg_targets, run_hd=False)
 
     metrics = seg_tracker.compute(run_hd=False)
 
-    metrics["val_loss"] = running_loss / len(dataloader)
+    # Adjust the loss denominator to account for the 15 combination runs per batch
+    metrics["val_loss"] = running_loss / (len(dataloader) * len(combinations))
     
     # Clear the tracker and force Python Garbage Collection to prevent System RAM leaks
     if hasattr(seg_tracker, 'reset'):
@@ -181,7 +153,7 @@ def validate_one_epoch(model_components, dataloader, criterion, device):
     return metrics
 
 
-def run_training(model_components, train_loader, val_loader, criterion, optimizer, scheduler, scaler, device):
+def run_training(model_components, train_loader, val_loader, criterion, optimizer, scheduler, scaler, device, session_epoch = config.NUM_EPOCHS):
     
     os.makedirs(config.CHECKPOINT_DIR, exist_ok=True)
     latest_path = os.path.join(config.CHECKPOINT_DIR, "latest_checkpoint.pth")
@@ -195,6 +167,10 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
 
     start_epoch = 0
     best_mean_dice = 0.0
+    last_val_wt = 0.0
+    last_val_tc = 0.0
+    last_val_et = 0.0
+    last_mean_dice = 0.0
 
     if os.path.exists(latest_path):
         print(f"[*] Found existing checkpoint record at: {latest_path}. Loading state...")
@@ -215,6 +191,10 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
         
         start_epoch = checkpoint["epoch"]
         best_mean_dice = checkpoint.get("best_mean_dice", 0.0)
+        last_val_wt = checkpoint.get("dice_WT", 0.0)
+        last_val_tc = checkpoint.get("dice_TC", 0.0)
+        last_val_et = checkpoint.get("dice_ET", 0.0)
+        last_mean_dice = checkpoint.get("mean_dice", 0.0)
         print(f"[+] Recovery complete. Resuming from absolute internal epoch counter: {start_epoch}")
     else:
         print("[*] No prior checkpoint found. Initializing a new training.")
@@ -230,11 +210,12 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
             writer.writerow(["Epoch Number", "[Train] Seg Loss", "Mean Dice", "WT Dice", "TC Dice", "ET Dice", "Best"])
     # -----------------------------------------------
 
-    target_epoch = start_epoch + config.NUM_EPOCHS
-    print(f"[*] Incremental Run Configuration: Training from Epoch {start_epoch} -> Target Epoch {target_epoch} (+{config.NUM_EPOCHS} epochs)")
+    target_epoch = start_epoch + session_epoch
+    print(f"[*] Incremental Run Configuration: Training from Epoch {start_epoch} -> Target Epoch {target_epoch} (+{session_epoch} epochs)")
 
     for epoch in range(start_epoch, target_epoch):
-        print(f"\n--- Epoch {epoch + 1}/{target_epoch} ---")
+        current_epoch_num = epoch + 1
+        print(f"\n--- Epoch {current_epoch_num}/{target_epoch} ---")
         
         # Phase 1 & 2: Frozen Warm-Up and Differential Fine-Tuning
         if epoch < config.FROZEN_WARMUP_EPOCHS:
@@ -250,25 +231,39 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
         )
         print(f"[Train] Seg Loss: {train_seg_loss:.4f}")
 
-        val_metrics = validate_one_epoch(model_components, val_loader, criterion, device)
-        
-        # Calculate Segmentation metrics
-        mean_dice = (val_metrics["dice_WT"] + val_metrics["dice_TC"] + val_metrics["dice_ET"]) / 3.0
-        
-        print(f"[Val] Segmentation Loss-> Mean Dice: {mean_dice:.4f} (WT: {val_metrics['dice_WT']:.4f}, TC: {val_metrics['dice_TC']:.4f}, ET: {val_metrics['dice_ET']:.4f})")
-
-
         if scheduler:
             scheduler.step()
 
-        # Check if the current epoch is the best one for CSV logging
-        is_best = "YES" if mean_dice > best_mean_dice else "NO"
+        # Determine whether to run validation (Every 5 epochs, matching SimMLM, or on final target epoch)
+        run_val = (current_epoch_num % 5 == 0) or (current_epoch_num == target_epoch)
+        is_best = "NO"
 
-        # Update historical threshold metrics safely
-        current_best_mean_dice = max(mean_dice, best_mean_dice)
+        if run_val:
+            val_metrics = validate_one_epoch(model_components, val_loader, criterion, device)
+            
+            # Calculate Segmentation metrics
+            mean_dice = (val_metrics["dice_WT"] + val_metrics["dice_TC"] + val_metrics["dice_ET"]) / 3.0
+            
+            last_val_wt = val_metrics["dice_WT"]
+            last_val_tc = val_metrics["dice_TC"]
+            last_val_et = val_metrics["dice_ET"]
+            last_mean_dice = mean_dice
+
+            print(f"[Val] Segmentation Loss-> Mean Dice: {mean_dice:.4f} (WT: {last_val_wt:.4f}, TC: {last_val_tc:.4f}, ET: {last_val_et:.4f})")
+
+            # Check if the current validation evaluation produces a new peak performance
+            if mean_dice > best_mean_dice:
+                best_mean_dice = mean_dice
+                is_best = "YES"
+
+            # Update historical threshold metrics safely
+            current_best_mean_dice = best_mean_dice
+        else:
+            print(f"[Val] Skipped for Epoch {current_epoch_num} (Validating every 5 epochs).")
+            current_best_mean_dice = best_mean_dice
 
         checkpoint_state = {
-            "epoch": epoch + 1,
+            "epoch": current_epoch_num,
             "backbone_state": model_components[0].state_dict(),
             "fusion_state": model_components[1].state_dict(),
             "shared_backbone_state": model_components[2].state_dict(),
@@ -277,10 +272,10 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
             "optimizer_state": optimizer.state_dict(),
             "scheduler_state": scheduler.state_dict() if scheduler else None,
             "scaler_state": scaler.state_dict(),
-            "dice_WT": val_metrics["dice_WT"],
-            "dice_TC": val_metrics["dice_TC"],
-            "dice_ET": val_metrics["dice_ET"],
-            "mean_dice": mean_dice,
+            "dice_WT": last_val_wt,
+            "dice_TC": last_val_tc,
+            "dice_ET": last_val_et,
+            "mean_dice": last_mean_dice,
             "best_mean_dice": current_best_mean_dice,
         }
 
@@ -289,8 +284,7 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
         print(f"Stateful tracking saved to: {latest_path}")
 
         # 1. Evaluate and track Independent Peak Segmentation Weights
-        if mean_dice > best_mean_dice:
-            best_mean_dice = mean_dice
+        if run_val and is_best == "YES":
             torch.save(checkpoint_state, best_seg_path)
             print(f"*** best segmentation framework model configuration stored at: {best_seg_path}")
 
@@ -298,12 +292,12 @@ def run_training(model_components, train_loader, val_loader, criterion, optimize
         with open(csv_file, mode='a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
-                epoch + 1, 
+                current_epoch_num, 
                 f"{train_seg_loss:.4f}", 
-                f"{mean_dice:.4f}", 
-                f"{val_metrics['dice_WT']:.4f}", 
-                f"{val_metrics['dice_TC']:.4f}", 
-                f"{val_metrics['dice_ET']:.4f}", 
+                f"{last_mean_dice:.4f}" if run_val else "-", 
+                f"{last_val_wt:.4f}" if run_val else "-", 
+                f"{last_val_tc:.4f}" if run_val else "-", 
+                f"{last_val_et:.4f}" if run_val else "-", 
                 is_best
             ])
         # -----------------------------

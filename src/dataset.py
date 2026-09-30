@@ -24,7 +24,7 @@ def create_dataloader(dataset, batch_size, shuffle=False):
         pin_memory=True   # pinned memory for rapid GPU transfer
     )
 
-def get_brats_dataloaders(batch_size=config.BATCH_SIZE):
+def get_brats_dataloaders(batch_size=config.BATCH_SIZE, is_joint_training=False):
     """Assembles and returns the final train and validation dataloaders."""
     # Load patient record dictionary splits
     splits = load_split_records(config.DATA_SPLIT_JSON)
@@ -32,7 +32,7 @@ def get_brats_dataloaders(batch_size=config.BATCH_SIZE):
     val_records = splits["val"]
     
     # Retrieve preconfigured MONAI transform pipelines
-    train_transforms = get_train_transforms()
+    train_transforms = get_train_transforms(is_joint_training=is_joint_training)
     val_transforms = get_val_transforms()
     
     # Construct datasets
