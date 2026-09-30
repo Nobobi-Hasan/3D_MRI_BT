@@ -158,9 +158,9 @@ class MambaBackbone(nn.Module):
                 
                 # Verify the checkpoint contains the explicitly named dictionaries
                 if "stem_state" in checkpoint:
-                    self.stems[idx].load_state_dict(checkpoint["stem_state"])
+                    self.stems[idx].load_state_dict(checkpoint["conv_stem_state"])
                     self.patch_embeds[idx].load_state_dict(checkpoint["patch_embed_state"])
-                    self.modality_encoders[idx].load_state_dict(checkpoint["encoder_state"])
+                    self.modality_encoders[idx].load_state_dict(checkpoint["mamba_backbone_state"])
                     
                     print(f"  [+] Successfully loaded {mod.upper()} expert from: {expert_path}")
                 else:
