@@ -157,7 +157,7 @@ class MambaBackbone(nn.Module):
                 checkpoint = torch.load(expert_path, map_location=device)
                 
                 # Verify the checkpoint contains the explicitly named dictionaries
-                if "stem_state" in checkpoint:
+                if "conv_stem_state" in checkpoint and "patch_embed_state" in checkpoint and "mamba_backbone_state" in checkpoint:
                     self.stems[idx].load_state_dict(checkpoint["conv_stem_state"])
                     self.patch_embeds[idx].load_state_dict(checkpoint["patch_embed_state"])
                     self.modality_encoders[idx].load_state_dict(checkpoint["mamba_backbone_state"])

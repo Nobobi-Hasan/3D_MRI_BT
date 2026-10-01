@@ -23,6 +23,7 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
 
     running_loss = 0.0
     running_seg_loss = 0.0
+    valid_batches = 0
 
     for batch in tqdm(dataloader, desc="Training Batches", leave=False):
         images = batch["image"].to(device)
@@ -60,15 +61,28 @@ def train_one_epoch(model_components, dataloader, criterion, optimizer, scaler, 
             # 4. Calculate Combined Loss (DiceCE + Scaled Aux DiceCE)
             loss_seg = criterion(seg_logits, seg_targets, aux_preds)
 
+        # -------  NaN/Inf Validation Before Backprop -------
+        # if torch.isnan(loss_seg) or torch.isinf(loss_seg):
+        if not torch.isfinite(loss_seg):
+            optimizer.zero_grad(set_to_none=True)
+            continue
+        # ---------------------------------------------------
+
         scaler.scale(loss_seg).backward()
+        
+        # ----- Gradient Clipping for Mamba Stability ------
+        scaler.unscale_(optimizer)
+        for component in model_components:
+            torch.nn.utils.clip_grad_norm_(component.parameters(), max_norm=1.0)
+        # --------------------------------------------------
+
         scaler.step(optimizer)
         scaler.update()
 
         running_seg_loss += loss_seg.item()
+        valid_batches += 1
 
-    num_batches = len(dataloader)
-    return running_seg_loss / num_batches
-
+    return running_seg_loss / max(valid_batches, 1)
 
 @torch.no_grad()
 def validate_one_epoch(model_components, dataloader, criterion, device):
